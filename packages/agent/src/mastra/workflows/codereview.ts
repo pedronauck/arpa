@@ -1,248 +1,281 @@
-import { createWorkflow, createStep } from "@mastra/core/workflows";
-import { Agent } from "@mastra/core";
-import { createTool } from "@mastra/core";
-import { z } from "zod";
-import { openai } from "@ai-sdk/openai";
-import { google } from "@ai-sdk/google";
 import { anthropic } from "@ai-sdk/anthropic";
+import { google } from "@ai-sdk/google";
+import { openai } from "@ai-sdk/openai";
+import { Agent, createTool } from "@mastra/core";
+import { RuntimeContext } from "@mastra/core/runtime-context";
+import { createStep, createWorkflow } from "@mastra/core/workflows";
+import { LibSQLStore } from "@mastra/libsql";
+import { Memory } from "@mastra/memory";
+import { exec } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
-import { exec } from "node:child_process";
-import { Memory } from "@mastra/memory";
-import { LibSQLStore } from "@mastra/libsql";
-import { RuntimeContext } from "@mastra/core/runtime-context";
+import { z } from "zod";
 
 const execAsync = promisify(exec);
 
 // Helper function to clean JSON from markdown code blocks
 function cleanJsonResponse(text: string): string {
-    // Remove markdown code blocks
-    let cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "");
-    // Also handle generic code blocks
-    cleaned = cleaned.replace(/^```.*$/gm, "");
-    // Trim whitespace
-    return cleaned.trim();
+  if (!text) return "";
+
+  // Remove markdown code blocks
+  let cleaned = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "");
+  // Also handle generic code blocks
+  cleaned = cleaned.replace(/^```.*$/gm, "");
+  // Trim whitespace
+  cleaned = cleaned.trim();
+
+  // Try to extract JSON object if text contains other content
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    cleaned = jsonMatch[0];
+  }
+
+  // Attempt to fix common JSON issues
+  // Fix trailing commas
+  cleaned = cleaned.replace(/,(\s*[}\]])/g, "$1");
+
+  // Check if JSON is incomplete and try to complete it
+  const openBraces = (cleaned.match(/\{/g) || []).length;
+  const closeBraces = (cleaned.match(/\}/g) || []).length;
+  if (openBraces > closeBraces) {
+    // Add missing closing braces
+    cleaned += "}".repeat(openBraces - closeBraces);
+  }
+
+  return cleaned;
 }
+
+// Get the project root (4 levels up from this file)
+const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');
 
 // File Tools for Agents
 const listFilesTool = createTool({
-    id: "list_files",
-    description: "List files in a directory recursively.",
-    inputSchema: z.object({
-        dir: z.string().describe("The directory path to list files from"),
-    }),
-    execute: async ({ context }) => {
-        const { dir } = context;
-        const files: string[] = [];
-        const walk = async (currentDir: string) => {
-            const entries = await fs.readdir(currentDir, {
-                withFileTypes: true,
-            });
-            for (const entry of entries) {
-                const fullPath = path.join(currentDir, entry.name);
-                if (entry.isDirectory()) {
-                    await walk(fullPath);
-                } else {
-                    files.push(fullPath);
-                }
-            }
-        };
-        await walk(dir);
-        return files;
-    },
+  id: "list_files",
+  description: "List files in a directory recursively.",
+  inputSchema: z.object({
+    dir: z.string().describe("The directory path to list files from"),
+  }),
+  execute: async ({ context }) => {
+    const { dir } = context;
+    // Resolve the directory path relative to project root
+    const resolvedDir = path.isAbsolute(dir) ? dir : path.join(PROJECT_ROOT, dir);
+
+    // Check if the directory exists
+    try {
+      await fs.access(resolvedDir);
+    } catch (error) {
+      // Provide helpful error message for common mistakes
+      if (dir.startsWith('package/')) {
+        return `Error: Directory '${dir}' does not exist. Did you mean 'packages/' instead of 'package/'?`;
+      }
+      return `Error: Directory '${dir}' does not exist.`;
+    }
+
+    const files: string[] = [];
+    const walk = async (currentDir: string) => {
+      const entries = await fs.readdir(currentDir, {
+        withFileTypes: true,
+      });
+      for (const entry of entries) {
+        const fullPath = path.join(currentDir, entry.name);
+        if (entry.isDirectory()) {
+          await walk(fullPath);
+        } else {
+          // Return relative paths from project root for readability
+          files.push(path.relative(PROJECT_ROOT, fullPath));
+        }
+      }
+    };
+    await walk(resolvedDir);
+    return files;
+  },
 });
 
 const readFileTool = createTool({
-    id: "read_file",
-    description: "Read the content of a file.",
-    inputSchema: z.object({
-        path: z.string().describe("The full path of the file to read"),
-    }),
-    execute: async ({ context }) => {
-        const { path: filePath } = context;
-        try {
-            return await fs.readFile(filePath, "utf-8");
-        } catch (error) {
-            return `Error reading file: ${(error as Error).message}`;
-        }
-    },
+  id: "read_file",
+  description: "Read the content of a file.",
+  inputSchema: z.object({
+    path: z.string().describe("The full path of the file to read"),
+  }),
+  execute: async ({ context }) => {
+    const { path: filePath } = context;
+    // Resolve the file path relative to project root
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(PROJECT_ROOT, filePath);
+    try {
+      return await fs.readFile(resolvedPath, "utf-8");
+    } catch (error: any) {
+      // Provide helpful error message for common mistakes
+      if (error.code === 'ENOENT' && filePath.startsWith('package/')) {
+        return `Error: File '${filePath}' does not exist. Did you mean 'packages/' instead of 'package/'?`;
+      }
+      return `Error reading file: ${(error as Error).message}`;
+    }
+  },
 });
 
 const writeFileTool = createTool({
-    id: "write_file",
-    description:
-        "Write or overwrite content to a file. Use this to apply code fixes.",
-    inputSchema: z.object({
-        path: z.string().describe("The full path of the file to write"),
-        content: z.string().describe("The content to write to the file"),
-    }),
-    execute: async ({ context }) => {
-        const { path: filePath, content } = context;
-        try {
-            await fs.writeFile(filePath, content, "utf-8");
-            return `File written successfully: ${filePath}`;
-        } catch (error) {
-            return `Error writing file: ${(error as Error).message}`;
-        }
-    },
+  id: "write_file",
+  description: "Write or overwrite content to a file. Use this to apply code fixes.",
+  inputSchema: z.object({
+    path: z.string().describe("The full path of the file to write"),
+    content: z.string().describe("The content to write to the file"),
+  }),
+  execute: async ({ context }) => {
+    const { path: filePath, content } = context;
+    // Resolve the file path relative to project root
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(PROJECT_ROOT, filePath);
+    try {
+      await fs.writeFile(resolvedPath, content, "utf-8");
+      return `File written successfully: ${resolvedPath}`;
+    } catch (error) {
+      return `Error writing file: ${(error as Error).message}`;
+    }
+  },
 });
 
 const gitDiffTool = createTool({
-    id: "get_git_diff",
-    description: "Get git diff for staged changes in the directory.",
-    inputSchema: z.object({ dir: z.string().describe("The directory path") }),
-    execute: async ({ context }) => {
-        const { dir } = context;
-        try {
-            const { stdout } = await execAsync(`git -C ${dir} diff --staged`);
-            return stdout;
-        } catch (error) {
-            return `Error getting git diff: ${(error as Error).message}`;
-        }
-    },
+  id: "get_git_diff",
+  description: "Get git diff for staged changes in the directory.",
+  inputSchema: z.object({ dir: z.string().describe("The directory path") }),
+  execute: async ({ context }) => {
+    const { dir } = context;
+    // Resolve the directory path relative to project root
+    const resolvedDir = path.isAbsolute(dir) ? dir : path.join(PROJECT_ROOT, dir);
+    try {
+      const { stdout } = await execAsync(`git -C ${resolvedDir} diff --staged`);
+      return stdout;
+    } catch (error) {
+      return `Error getting git diff: ${(error as Error).message}`;
+    }
+  },
 });
 
 // Dynamic Agent Base for Custom Model Selection, now with File Tools
 const dynamicReviewAgent = (contextKey: string) =>
-    new Agent({
-        name: "Dynamic Code Review Agent",
-        instructions: async ({ runtimeContext }) => {
-            const model = runtimeContext.get(contextKey) as string;
-            return `You are a code review expert using ${model}. You will be given a directory path containing code files. Use the list_files and read_file tools to access and read the necessary files for review. Analyze the code for issues (bugs, security, performance, architecture). Rate confidence (exploring, low, medium, high, certain). List issues from critical to low, note good patterns. If needed, suggest fixes.`;
+  new Agent({
+    name: "Dynamic Code Review Agent",
+    instructions: async ({ runtimeContext }) => {
+      const model = runtimeContext.get(contextKey) as string;
+      return `You are a code review expert using ${model}. You will be given a directory path containing code files. Use the list_files and read_file tools to access and read the necessary files for review. Analyze the code for issues (bugs, security, performance, architecture). Rate confidence (exploring, low, medium, high, certain). List issues from critical to low, note good patterns. If needed, suggest fixes.`;
+    },
+    model: ({ runtimeContext }) => {
+      const modelName = runtimeContext.get(contextKey) as string;
+      if (modelName.includes("gemini")) return google(modelName);
+      if (modelName.includes("openai") || modelName === "o3") return openai("gpt-4o");
+      if (modelName.includes("claude")) return anthropic(modelName);
+      return openai("gpt-4o-mini"); // Default
+    },
+    tools: {
+      list_files: listFilesTool,
+      read_file: readFileTool,
+      write_file: writeFileTool,
+      get_git_diff: gitDiffTool,
+    },
+    memory: ({ runtimeContext }) =>
+      new Memory({
+        storage: new LibSQLStore({ url: "file:/tmp/temp-review.db" }),
+        options: {
+          lastMessages: 10,
+          semanticRecall: false, // Disable semantic recall to avoid vector store requirement
         },
-        model: ({ runtimeContext }) => {
-            const modelName = runtimeContext.get(contextKey) as string;
-            if (modelName.includes("gemini")) return google(modelName);
-            if (modelName.includes("openai") || modelName === "o3")
-                return openai("gpt-4o");
-            if (modelName.includes("claude")) return anthropic(modelName);
-            return openai("gpt-4o-mini"); // Default
-        },
-        tools: {
-            list_files: listFilesTool,
-            read_file: readFileTool,
-            write_file: writeFileTool,
-            get_git_diff: gitDiffTool,
-        },
-        memory: ({ runtimeContext }) =>
-            new Memory({
-                storage: new LibSQLStore({ url: "file:/tmp/temp-review.db" }),
-                options: {
-                    lastMessages: 10,
-                    semanticRecall: false, // Disable semantic recall to avoid vector store requirement
-                },
-            }),
-    });
+      }),
+  });
 
 // Single stateful step with suspend/resume for step-by-step review
 const codeReviewStep = createStep({
-    id: "code-review",
-    description:
-        "Step-by-step code review with suspension between investigation phases",
-    inputSchema: z.object({
-        // Initial configuration
-        directory: z.string(),
-        relevant_files: z.array(z.string()).optional(),
-        review_type: z
-            .enum(["full", "security", "performance", "quick"])
-            .default("full"),
-        focus_on: z.string().optional(),
-        standards: z.string().optional(),
-        severity_filter: z
-            .enum(["critical", "high", "medium", "low", "all"])
-            .default("all"),
-        models: z.object({
-            main: z.string(),
-            expert: z.string().optional(),
-        }),
-        review_validation_type: z
-            .enum(["internal", "external"])
-            .default("external"),
+  id: "code-review",
+  description: "Step-by-step code review with suspension between investigation phases",
+  inputSchema: z.object({
+    // Initial configuration
+    directory: z.string(),
+    relevant_files: z.array(z.string()).optional(),
+    review_type: z.enum(["full", "security", "performance", "quick"]).default("full"),
+    focus_on: z.string().optional(),
+    standards: z.string().optional(),
+    severity_filter: z.enum(["critical", "high", "medium", "low", "all"]).default("all"),
+    models: z.object({
+      main: z.string(),
+      expert: z.string().optional(),
     }),
-    outputSchema: z.object({
-        finalReport: z.object({
-            issues: z.array(
-                z.object({
-                    severity: z.enum(["critical", "high", "medium", "low"]),
-                    description: z.string(),
-                    file: z.string().optional(),
-                    line: z.number().optional(),
-                    confidence: z.string(),
-                }),
-            ),
-            status: z.string(),
-            findings: z.string(),
-            confidence: z.enum([
-                "exploring",
-                "low",
-                "medium",
-                "high",
-                "very_high",
-                "almost_certain",
-                "certain",
-            ]),
-            files_checked: z.array(z.string()),
-            relevant_context: z.array(z.string()),
-        }),
+    review_validation_type: z.enum(["internal", "external"]).default("external"),
+  }),
+  outputSchema: z.object({
+    finalReport: z.object({
+      issues: z.array(
+        z.object({
+          severity: z.enum(["critical", "high", "medium", "low"]),
+          description: z.string(),
+          file: z.string().optional(),
+          line: z.number().optional(),
+          confidence: z.string(),
+        })
+      ),
+      status: z.string(),
+      findings: z.string(),
+      confidence: z.enum([
+        "exploring",
+        "low",
+        "medium",
+        "high",
+        "very_high",
+        "almost_certain",
+        "certain",
+      ]),
+      files_checked: z.array(z.string()),
+      relevant_context: z.array(z.string()),
     }),
-    suspendSchema: z.object({
-        currentState: z.object({
-            step_number: z.number(),
-            total_steps: z.number(),
-            findings: z.string(),
-            issues_found: z.array(z.any()),
-            files_checked: z.array(z.string()),
-            relevant_context: z.array(z.string()),
-            confidence: z.string(),
-            continuation_id: z.string().optional(),
-        }),
+  }),
+  suspendSchema: z.object({
+    currentState: z.object({
+      step_number: z.number(),
+      total_steps: z.number(),
+      findings: z.string(),
+      issues_found: z.array(z.any()),
+      files_checked: z.array(z.string()),
+      relevant_context: z.array(z.string()),
+      confidence: z.string(),
+      continuation_id: z.string().optional(),
     }),
-    resumeSchema: z.object({
-        step: z.string(),
-        step_number: z.number(),
-        total_steps: z.number(),
-        next_step_required: z.boolean(),
-        findings: z.string(),
-        issues_found: z
-            .array(
-                z.object({
-                    severity: z.enum(["critical", "high", "medium", "low"]),
-                    description: z.string(),
-                    file: z.string().optional(),
-                    line: z.number().optional(),
-                }),
-            )
-            .optional(),
-        files_checked: z.array(z.string()).optional(),
-        relevant_context: z.array(z.string()).optional(),
-        confidence: z.enum([
-            "exploring",
-            "low",
-            "medium",
-            "high",
-            "very_high",
-            "almost_certain",
-            "certain",
-        ]),
-        continuation_id: z.string().optional(),
-        backtrack_from_step: z.number().optional(),
-    }),
-    execute: async ({
-        inputData,
-        resumeData,
-        suspend,
-        mastra,
-        runtimeContext,
-    }) => {
-        const { directory, models, review_type, review_validation_type } =
-            inputData;
+  }),
+  resumeSchema: z.object({
+    step: z.string(),
+    step_number: z.number(),
+    total_steps: z.number(),
+    next_step_required: z.boolean(),
+    findings: z.string(),
+    issues_found: z
+      .array(
+        z.object({
+          severity: z.enum(["critical", "high", "medium", "low"]),
+          description: z.string(),
+          file: z.string().optional(),
+          line: z.number().optional(),
+        })
+      )
+      .optional(),
+    files_checked: z.array(z.string()).optional(),
+    relevant_context: z.array(z.string()).optional(),
+    confidence: z.enum([
+      "exploring",
+      "low",
+      "medium",
+      "high",
+      "very_high",
+      "almost_certain",
+      "certain",
+    ]),
+    continuation_id: z.string().optional(),
+    backtrack_from_step: z.number().optional(),
+  }),
+  execute: async ({ inputData, resumeData, suspend, mastra, runtimeContext }) => {
+    const { directory, models, review_type, review_validation_type } = inputData;
 
-        // Load the comprehensive prompt with workflow instructions
-        const { prompt: basePrompt } = await import("../prompts/codereview");
+    // Load the comprehensive prompt with workflow instructions
+    const { prompt: basePrompt } = await import("../prompts/codereview");
 
-        // Add workflow-specific instructions
-        const CODEREVIEW_WORKFLOW_PROMPT = `
+    // Add workflow-specific instructions
+    const CODEREVIEW_WORKFLOW_PROMPT = `
 ${basePrompt}
 
 ADDITIONAL WORKFLOW INSTRUCTIONS FOR STEP-BY-STEP REVIEW:
@@ -284,34 +317,34 @@ IMPORTANT: After each step, the workflow will suspend. You must:
 3. Resume the workflow with your findings
 4. Continue until next_step_required=false`;
 
-        // Initialize or get resume state
-        let currentState;
-        if (resumeData) {
-            // Continuing from a previous step
-            currentState = {
-                step_number: resumeData.step_number,
-                total_steps: resumeData.total_steps,
-                findings: resumeData.findings,
-                issues_found: resumeData.issues_found || [],
-                files_checked: resumeData.files_checked || [],
-                relevant_context: resumeData.relevant_context || [],
-                confidence: resumeData.confidence,
-                continuation_id: resumeData.continuation_id,
-            };
+    // Initialize or get resume state
+    let currentState;
+    if (resumeData) {
+      // Continuing from a previous step
+      currentState = {
+        step_number: resumeData.step_number,
+        total_steps: resumeData.total_steps,
+        findings: resumeData.findings,
+        issues_found: resumeData.issues_found || [],
+        files_checked: resumeData.files_checked || [],
+        relevant_context: resumeData.relevant_context || [],
+        confidence: resumeData.confidence,
+        continuation_id: resumeData.continuation_id,
+      };
 
-            // Check if we're done
-            if (!resumeData.next_step_required) {
-                // Perform expert analysis if configured
-                if (review_validation_type === "external" && models.expert) {
-                    // Call expert model for validation
-                    const expertAgent = dynamicReviewAgent("models.expert");
-                    const expertContext = new RuntimeContext();
-                    expertContext.set("models.expert", models.expert);
+      // Check if we're done
+      if (!resumeData.next_step_required) {
+        // Perform expert analysis if configured
+        if (review_validation_type === "external" && models.expert) {
+          // Call expert model for validation
+          const expertAgent = dynamicReviewAgent("models.expert");
+          const expertContext = new RuntimeContext();
+          expertContext.set("models.expert", models.expert);
 
-                    const expertResponse = await expertAgent.streamVNext(
-                        {
-                            role: "user",
-                            content: `Perform expert validation of this code review:
+          const expertResponse = await expertAgent.streamVNext(
+            {
+              role: "user",
+              content: `Perform expert validation of this code review:
 Directory: ${directory}
 Review Type: ${review_type}
 Findings: ${currentState.findings}
@@ -320,68 +353,79 @@ Confidence: ${currentState.confidence}
 
 Validate the findings and provide your expert analysis. Output in strict JSON format:
 { "validatedIssues": [...], "additionalFindings": "...", "recommendation": "..." }`,
-                        },
-                        { runtimeContext: expertContext, format: "aisdk" },
-                    );
+            },
+            { runtimeContext: expertContext, format: "aisdk" }
+          );
 
-                    let expertText = "";
-                    for await (const chunk of expertResponse.textStream) {
-                        expertText += chunk;
-                    }
+          let expertText = "";
+          for await (const chunk of expertResponse.textStream) {
+            expertText += chunk;
+          }
 
-                    const expertAnalysis = JSON.parse(
-                        cleanJsonResponse(expertText),
-                    );
-
-                    // Merge expert findings
-                    return {
-                        finalReport: {
-                            issues: [
-                                ...currentState.issues_found,
-                                ...(expertAnalysis.validatedIssues || []),
-                            ],
-                            status: "completed",
-                            findings: `${currentState.findings}\n\nExpert Analysis: ${expertAnalysis.additionalFindings || expertAnalysis.recommendation}`,
-                            confidence: currentState.confidence,
-                            files_checked: currentState.files_checked,
-                            relevant_context: currentState.relevant_context,
-                        },
-                    };
-                }
-
-                // Return final report without expert analysis
-                return {
-                    finalReport: {
-                        issues: currentState.issues_found,
-                        status: "completed",
-                        findings: currentState.findings,
-                        confidence: currentState.confidence,
-                        files_checked: currentState.files_checked,
-                        relevant_context: currentState.relevant_context,
-                    },
-                };
+          let expertAnalysis;
+          try {
+            const cleanedExpertText = cleanJsonResponse(expertText);
+            if (!cleanedExpertText) {
+              throw new Error("Expert response is empty after cleaning");
             }
-        } else {
-            // First call - initialize state
-            currentState = {
-                step_number: 1,
-                total_steps: 3, // Will be set by agent
-                findings: "",
-                issues_found: [],
-                files_checked: [],
-                relevant_context: [],
-                confidence: "exploring",
-                continuation_id: crypto.randomUUID(),
+            expertAnalysis = JSON.parse(cleanedExpertText);
+          } catch (parseError) {
+            console.error("Failed to parse expert response:", expertText.substring(0, 1000));
+            console.error("Parse error:", parseError);
+            // Return a default expert analysis on parse error
+            expertAnalysis = {
+              validatedIssues: [],
+              additionalFindings: "Expert analysis could not be parsed",
+              recommendation: "Manual review recommended due to parsing error"
             };
+          }
+
+          // Merge expert findings
+          return {
+            finalReport: {
+              issues: [...currentState.issues_found, ...(expertAnalysis.validatedIssues || [])],
+              status: "completed",
+              findings: `${currentState.findings}\n\nExpert Analysis: ${expertAnalysis.additionalFindings || expertAnalysis.recommendation}`,
+              confidence: currentState.confidence,
+              files_checked: currentState.files_checked,
+              relevant_context: currentState.relevant_context,
+            },
+          };
         }
 
-        // Create agent for current step
-        const agent = dynamicReviewAgent("models.main");
-        const rtContext = runtimeContext || new RuntimeContext();
-        rtContext.set("models.main", models.main);
+        // Return final report without expert analysis
+        return {
+          finalReport: {
+            issues: currentState.issues_found,
+            status: "completed",
+            findings: currentState.findings,
+            confidence: currentState.confidence,
+            files_checked: currentState.files_checked,
+            relevant_context: currentState.relevant_context,
+          },
+        };
+      }
+    } else {
+      // First call - initialize state
+      currentState = {
+        step_number: 1,
+        total_steps: 3, // Will be set by agent
+        findings: "",
+        issues_found: [],
+        files_checked: [],
+        relevant_context: [],
+        confidence: "exploring",
+        continuation_id: crypto.randomUUID(),
+      };
+    }
 
-        // Build prompt for current step
-        const stepPrompt = `${CODEREVIEW_WORKFLOW_PROMPT}
+    // Create agent for current step
+    const agent = dynamicReviewAgent("models.main");
+    const rtContext = runtimeContext || new RuntimeContext();
+    rtContext.set("models.main", models.main);
+
+    // Build prompt for current step
+    const stepPrompt = `${CODEREVIEW_WORKFLOW_PROMPT}
 
 CURRENT STATE:
 - Step Number: ${currentState.step_number}
@@ -393,14 +437,14 @@ CURRENT STATE:
 
 YOUR TASK:
 ${
-    currentState.step_number === 1
-        ? `This is Step 1. You must:
+  currentState.step_number === 1
+    ? `This is Step 1. You must:
 1. Use the list_files and read_file tools to explore the directory: ${directory}
 2. Understand the overall structure and identify key files
 3. Plan your review strategy and set total_steps (2-5)
 4. Begin initial assessment of obvious issues
 5. Output your step plan and initial findings`
-        : `This is Step ${currentState.step_number}. Continue your investigation:
+    : `This is Step ${currentState.step_number}. Continue your investigation:
 1. Deep dive into specific areas identified in previous steps
 2. Use tools to examine suspicious code sections
 3. Validate or refute initial hypotheses
@@ -428,136 +472,137 @@ Output your response in strict JSON format:
     "confidence": "<exploring/low/medium/high/very_high/almost_certain/certain>"
 }`;
 
-        const response = await agent.streamVNext(
-            {
-                role: "user",
-                content: stepPrompt,
-            },
-            { runtimeContext: rtContext, format: "aisdk" },
-        );
+    const response = await agent.streamVNext(
+      {
+        role: "user",
+        content: stepPrompt,
+      },
+      { runtimeContext: rtContext, format: "aisdk" }
+    );
 
-        // Collect the response
-        let fullText = "";
-        for await (const chunk of response.textStream) {
-            fullText += chunk;
-        }
+    // Collect the response
+    let fullText = "";
+    for await (const chunk of response.textStream) {
+      fullText += chunk;
+    }
 
-        const stepResult = JSON.parse(cleanJsonResponse(fullText));
+    let stepResult;
+    try {
+      const cleanedText = cleanJsonResponse(fullText);
+      if (!cleanedText) {
+        throw new Error("Step response is empty after cleaning");
+      }
+      stepResult = JSON.parse(cleanedText);
+    } catch (parseError) {
+      console.error("Failed to parse step response:", fullText.substring(0, 1000));
+      console.error("Parse error:", parseError);
+      // Return a basic step result on parse error
+      stepResult = {
+        step_number: currentState.step_number,
+        total_steps: currentState.total_steps,
+        findings: "Step could not be parsed - continuing with previous state",
+        issues_found: [],
+        files_checked: [],
+        relevant_context: [],
+        confidence: currentState.confidence,
+        next_step_required: false
+      };
+    }
 
-        // Update state with step results
-        currentState = {
-            ...currentState,
-            step_number: stepResult.step_number,
-            total_steps: stepResult.total_steps,
-            findings: currentState.findings + "\n\n" + stepResult.findings,
-            issues_found: [
-                ...currentState.issues_found,
-                ...(stepResult.issues_found || []),
-            ],
-            files_checked: [
-                ...new Set([
-                    ...currentState.files_checked,
-                    ...(stepResult.files_checked || []),
-                ]),
-            ],
-            relevant_context: [
-                ...new Set([
-                    ...currentState.relevant_context,
-                    ...(stepResult.relevant_context || []),
-                ]),
-            ],
-            confidence: stepResult.confidence,
-        };
+    // Update state with step results
+    currentState = {
+      ...currentState,
+      step_number: stepResult.step_number,
+      total_steps: stepResult.total_steps,
+      findings: currentState.findings + "\n\n" + stepResult.findings,
+      issues_found: [...currentState.issues_found, ...(stepResult.issues_found || [])],
+      files_checked: [
+        ...new Set([...currentState.files_checked, ...(stepResult.files_checked || [])]),
+      ],
+      relevant_context: [
+        ...new Set([...currentState.relevant_context, ...(stepResult.relevant_context || [])]),
+      ],
+      confidence: stepResult.confidence,
+    };
 
-        // If more steps are needed, suspend
-        if (stepResult.next_step_required) {
-            await suspend({ currentState });
-            // This return is reached only if suspend is mocked in tests
-            return {
-                finalReport: {
-                    issues: [],
-                    status: "suspended",
-                    findings: "Suspended for investigation",
-                    confidence: "exploring",
-                    files_checked: [],
-                    relevant_context: [],
-                },
-            };
-        }
+    // If more steps are needed, suspend
+    if (stepResult.next_step_required) {
+      await suspend({ currentState });
+      // This return is reached only if suspend is mocked in tests
+      return {
+        finalReport: {
+          issues: [],
+          status: "suspended",
+          findings: "Suspended for investigation",
+          confidence: "exploring",
+          files_checked: [],
+          relevant_context: [],
+        },
+      };
+    }
 
-        // Final step completed - prepare for expert analysis or return
-        // This will be handled in the next resume call
-        await suspend({ currentState });
-        return {
-            finalReport: {
-                issues: currentState.issues_found,
-                status: "pending_final",
-                findings: currentState.findings,
-                confidence: currentState.confidence,
-                files_checked: currentState.files_checked,
-                relevant_context: currentState.relevant_context,
-            },
-        };
-    },
+    // Final step completed - prepare for expert analysis or return
+    // This will be handled in the next resume call
+    await suspend({ currentState });
+    return {
+      finalReport: {
+        issues: currentState.issues_found,
+        status: "pending_final",
+        findings: currentState.findings,
+        confidence: currentState.confidence,
+        files_checked: currentState.files_checked,
+        relevant_context: currentState.relevant_context,
+      },
+    };
+  },
 });
 
 // Code Review Workflow - Updated Input
 export const codeReviewWorkflow = createWorkflow({
-    id: "code-review-workflow",
-    description: "Migrated Zen MCP Code Review with Directory and File Tools",
-    inputSchema: z.object({
-        // Initial configuration (step 1 only)
-        directory: z
-            .string()
-            .describe("Path to the directory containing code files for review"),
-        relevant_files: z
-            .array(z.string())
-            .describe("Files/directories to review")
-            .optional(),
-        review_type: z
-            .enum(["full", "security", "performance", "quick"])
-            .default("full"),
-        focus_on: z.string().optional(),
-        standards: z.string().optional(),
-        severity_filter: z
-            .enum(["critical", "high", "medium", "low", "all"])
-            .default("all"),
+  id: "code-review-workflow",
+  description: "Migrated Zen MCP Code Review with Directory and File Tools",
+  inputSchema: z.object({
+    // Initial configuration (step 1 only)
+    directory: z.string().describe("Path to the directory containing code files for review"),
+    relevant_files: z.array(z.string()).describe("Files/directories to review").optional(),
+    review_type: z.enum(["full", "security", "performance", "quick"]).default("full"),
+    focus_on: z.string().optional(),
+    standards: z.string().optional(),
+    severity_filter: z.enum(["critical", "high", "medium", "low", "all"]).default("all"),
 
-        // Model configuration
-        models: z.object({
-            main: z.string(),
-            expert: z.string().optional(), // For external validation
-        }),
-        review_validation_type: z
-            .enum(["internal", "external"])
-            .default("external"),
+    // Model configuration
+    models: z.object({
+      main: z.string(),
+      expert: z.string().optional(), // For external validation
     }),
-    outputSchema: z.object({
-        finalReport: z.object({
-            issues: z.array(
-                z.object({
-                    severity: z.enum(["critical", "high", "medium", "low"]),
-                    description: z.string(),
-                    file: z.string().optional(),
-                    line: z.number().optional(),
-                    confidence: z.string(),
-                }),
-            ),
-            status: z.string(),
-            findings: z.string(),
-            confidence: z.enum([
-                "exploring",
-                "low",
-                "medium",
-                "high",
-                "very_high",
-                "almost_certain",
-                "certain",
-            ]),
-            files_checked: z.array(z.string()),
-            relevant_context: z.array(z.string()),
-        }),
+    review_validation_type: z.enum(["internal", "external"]).default("external"),
+  }),
+  outputSchema: z.object({
+    finalReport: z.object({
+      issues: z.array(
+        z.object({
+          severity: z.enum(["critical", "high", "medium", "low"]),
+          description: z.string(),
+          file: z.string().optional(),
+          line: z.number().optional(),
+          confidence: z.string(),
+        })
+      ),
+      status: z.string(),
+      findings: z.string(),
+      confidence: z.enum([
+        "exploring",
+        "low",
+        "medium",
+        "high",
+        "very_high",
+        "almost_certain",
+        "certain",
+      ]),
+      files_checked: z.array(z.string()),
+      relevant_context: z.array(z.string()),
     }),
+  }),
 })
-    .then(codeReviewStep)
-    .commit();
+  .then(codeReviewStep)
+  .commit();

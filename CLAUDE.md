@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Critical Instructions
 
 <critical>
-- **YOU MUST** use Serena MCP to discover and edit code instead of the READ, WRITE, UPDATE tools
+- **YOU MUST** use Serena MCP to discover and find out, **BUT NOT TO EDIT**
 - **YOU MUST** use Zen MCP (with Gemini 2.5 Pro) to debug, analyze and trace complex flows
 - **YOU MUST ALWAYS** show all recommendations/issues from a Zen MCP review, regardless of whether they are related to your task or not
 </critical>

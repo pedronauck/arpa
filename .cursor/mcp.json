@@ -1,11 +1,11 @@
 {
-    "mcpServers": {
-        "arpa-mcp": {
-            "command": "bun",
-            "args": [
-                "run",
-                "/Users/pedronauck/Dev/projects/arpa/packages/agent/src/mcp/index.ts"
-            ]
-        }
+  "mcpServers": {
+    "arpa-mcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/Users/pedronauck/Dev/projects/arpa/packages/agent/src/mcp/index.ts"
+      ]
     }
+  }
 }

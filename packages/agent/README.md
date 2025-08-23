@@ -67,12 +67,15 @@ Add to your Claude Desktop configuration (`~/Library/Application Support/Claude/
 
 ```json
 {
-    "mcpServers": {
-        "arpa-mcp": {
-            "command": "bun",
-            "args": ["run", "/path/to/packages/agent/src/mcp/index.ts"]
-        }
+  "mcpServers": {
+    "arpa-mcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/path/to/packages/agent/src/mcp/index.ts"
+      ]
     }
+  }
 }
 ```
 
@@ -82,12 +85,15 @@ Add to your Cursor settings:
 
 ```json
 {
-    "mcp.servers": {
-        "arpa-mcp": {
-            "command": "bun",
-            "args": ["run", "/path/to/packages/agent/src/mcp/index.ts"]
-        }
+  "mcp.servers": {
+    "arpa-mcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/path/to/packages/agent/src/mcp/index.ts"
+      ]
     }
+  }
 }
 ```
 
@@ -98,9 +104,9 @@ import { codeReviewWorkflow } from "@arpa/agent";
 
 // Use the workflow directly in your application
 const result = await codeReviewWorkflow.execute({
-    directory: "./src",
-    review_type: "full",
-    // ... other options
+  directory: "./src",
+  review_type: "full",
+  // ... other options
 });
 ```
 
@@ -149,26 +155,26 @@ The `code_review` tool performs comprehensive code analysis with suspension poin
 ```javascript
 // Step 1: Start review
 const result1 = await callTool("code_review", {
-    directory: "./src",
-    review_type: "full",
+  directory: "./src",
+  review_type: "full",
 });
 // Returns: { status: 'suspended', sessionId: 'xxx', ... }
 
 // Step 2: Continue with findings
 const result2 = await callTool("code_review", {
-    sessionId: "xxx",
-    step_number: 2,
-    findings: "Found potential security issue...",
-    issues_found: [{ severity: "high", description: "..." }],
-    next_step_required: true,
+  sessionId: "xxx",
+  step_number: 2,
+  findings: "Found potential security issue...",
+  issues_found: [{ severity: "high", description: "..." }],
+  next_step_required: true,
 });
 
 // Step 3: Complete review
 const result3 = await callTool("code_review", {
-    sessionId: "xxx",
-    step_number: 3,
-    next_step_required: false,
-    findings: "Final analysis complete...",
+  sessionId: "xxx",
+  step_number: 3,
+  next_step_required: false,
+  findings: "Final analysis complete...",
 });
 // Returns: { status: 'completed', result: { ... } }
 ```

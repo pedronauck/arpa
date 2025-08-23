@@ -1,13 +1,13 @@
 {
-    "recommendations": [
-        "esbenp.prettier-vscode",
-        "bradlc.vscode-tailwindcss",
-        "ms-vscode.vscode-typescript-next",
-        "dbaeumer.vscode-eslint",
-        "esbenp.prettier-vscode",
-        "connor4312.esbuild-problem-matchers",
-        "github.vscode-github-actions",
-        "YuTengjing.vscode-archive",
-        "YuTengjing.package-manager-enhancer"
-    ]
+  "recommendations": [
+    "esbenp.prettier-vscode",
+    "bradlc.vscode-tailwindcss",
+    "ms-vscode.vscode-typescript-next",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "connor4312.esbuild-problem-matchers",
+    "github.vscode-github-actions",
+    "YuTengjing.vscode-archive",
+    "YuTengjing.package-manager-enhancer"
+  ]
 }
