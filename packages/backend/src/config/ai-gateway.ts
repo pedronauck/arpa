@@ -33,7 +33,7 @@ export function getAIGatewayConfig(): AIGatewayConfig {
  * Normalize model names to AI Gateway format (provider/model)
  */
 export function normalizeModelName(modelName: string): string {
-  // Handle already formatted names
+  // Handle already formatted names - just return them as-is for AI Gateway
   if (modelName.includes('/')) {
     return modelName;
   }
@@ -47,6 +47,7 @@ export function normalizeModelName(modelName: string): string {
     'claude-3-sonnet': 'anthropic/claude-3-sonnet-20240229',
     'claude-3-opus': 'anthropic/claude-3-opus-20240229',
     'claude-sonnet-4': 'anthropic/claude-sonnet-4',
+    'claude-3-5-sonnet': 'anthropic/claude-3-5-sonnet-20241022',
     'gemini-pro': 'google/gemini-pro',
     'gemini-1.5-pro': 'google/gemini-1.5-pro',
   };

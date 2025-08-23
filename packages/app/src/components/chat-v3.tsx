@@ -27,6 +27,14 @@ interface ChatV3Props {
 
 export function ChatV3({ chatId }: ChatV3Props) {
   const [input, setInput] = useState('');
+  const [selectedModel, setSelectedModel] = useState(() => {
+    // Load saved model from localStorage or use default
+    if (typeof window !== 'undefined') {
+      const savedModel = localStorage.getItem('arpa-selected-model');
+      return savedModel || 'anthropic/claude-4-opus';
+    }
+    return 'anthropic/claude-4-opus';
+  });
   const [historicalMessagesLoaded, setHistoricalMessagesLoaded] = useState(false);
   const [savedMessageIds, setSavedMessageIds] = useState<Set<string>>(new Set());
 
@@ -44,6 +52,9 @@ export function ChatV3({ chatId }: ChatV3Props) {
   } = useChat({
     transport: new DefaultChatTransport({
       api: 'http://localhost:3001/api/chat',
+      headers: {
+        'X-Model': selectedModel,
+      },
     }),
     onFinish: async (message) => {
       console.log('onFinish - Processing assistant response');
@@ -66,7 +77,6 @@ export function ChatV3({ chatId }: ChatV3Props) {
           });
           console.log('✅ Assistant message saved successfully');
           setSavedMessageIds(prev => new Set(prev).add(message.message.id));
-          toast.success('Response saved');
         } catch (error) {
           console.error('❌ Failed to save assistant message:', error);
           toast.error('Failed to save assistant response');
@@ -77,6 +87,13 @@ export function ChatV3({ chatId }: ChatV3Props) {
 
   // Use custom hook for session management
   const { suspendedSessions, setSuspendedSessions } = useChatSessions(messages);
+
+  // Save selected model to localStorage when it changes
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('arpa-selected-model', selectedModel);
+    }
+  }, [selectedModel]);
 
   // Create workflow continuation handler
   const workflowContinuation = new WorkflowContinuation({
@@ -129,7 +146,6 @@ export function ChatV3({ chatId }: ChatV3Props) {
         const loadedIds = new Set(uiMessages.map(msg => msg.id));
         setSavedMessageIds(loadedIds);
         console.log(`Loaded ${uiMessages.length} historical messages`);
-        toast.success(`Loaded ${uiMessages.length} previous messages`);
       } else {
         setHistoricalMessagesLoaded(true);
       }
@@ -220,6 +236,8 @@ export function ChatV3({ chatId }: ChatV3Props) {
         status={status}
         onSubmit={handleSubmit}
         onStop={stop}
+        selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
       />
     </div>
   );

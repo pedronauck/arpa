@@ -14,6 +14,9 @@ chat.post('/chat', async (c) => {
   }
 
   const { messages } = await c.req.json();
+  
+  // Get selected model from header or use default
+  const selectedModel = c.req.header('X-Model') || 'anthropic/claude-sonnet-4';
 
   // Convert messages to UIMessage format if needed
   const uiMessages = messages.map((msg: any) => {
@@ -38,14 +41,36 @@ chat.post('/chat', async (c) => {
     return c.json({ error: 'MCP tools not available' }, 503);
   }
 
-  // Log tools to verify they're properly formatted
+  // Log tools and selected model
   console.log('Available tools:', Object.keys(tools));
+  console.log('Selected model:', selectedModel);
+
+  // Enhance tools to include the selected model parameter
+  const enhancedTools = Object.fromEntries(
+    Object.entries(tools).map(([name, tool]) => {
+      if (name === 'code_review') {
+        // Wrap the code_review tool to inject the model parameter
+        return [name, {
+          ...tool,
+          execute: async (args: any) => {
+            // Add the selected model to the arguments
+            const enhancedArgs = {
+              ...args,
+              model: selectedModel
+            };
+            return tool.execute(enhancedArgs);
+          }
+        }];
+      }
+      return [name, tool];
+    })
+  );
 
   try {
     const response = streamText({
-      model: normalizeModelName('claude-sonnet-4'),
+      model: normalizeModelName(selectedModel),
       messages: modelMessages,
-      tools,
+      tools: enhancedTools,
       system: "You are an AI assistant with code review capabilities via MCP tools. When asked to review code, use the code_review tool to perform the review.",
     });
 

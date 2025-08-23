@@ -37,6 +37,9 @@ export const codeReviewInputSchema = z.object({
   focus_on: z.string().optional().describe("Specific aspects to focus on"),
   standards: z.string().optional().describe("Coding standards to enforce"),
   severity_filter: z.enum(["critical", "high", "medium", "low", "all"]).default("all"),
+  
+  // Model configuration
+  model: z.string().optional().describe("Model to use for code review (e.g., 'anthropic/claude-3-5-sonnet-20241022', 'openai/gpt-4o', etc.)"),
 
   // Resume data (for continuing reviews)
   step: z.string().optional().describe("Current step description"),
@@ -113,6 +116,9 @@ export const codeReviewTool = {
         });
       } else {
         // Start a new review
+        // Use provided model or default to claude-sonnet-4
+        const selectedModel = args.model || "anthropic/claude-sonnet-4";
+        
         result = await workflowRun.start({
           inputData: {
             directory: args.directory || ".",
@@ -132,8 +138,8 @@ export const codeReviewTool = {
             issues_found: [],
             review_validation_type: "external",
             models: {
-              main: "gpt-4.1",
-              expert: "gpt-4.1",
+              main: selectedModel,
+              expert: selectedModel, // Use same model for expert validation
             },
           },
         });

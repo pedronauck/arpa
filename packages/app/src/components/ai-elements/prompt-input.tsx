@@ -131,7 +131,7 @@ export const PromptInputButton = ({
         newSize === 'default' && 'px-3',
         className
       )}
-      size={newSize}
+      size={newSize as any}
       type="button"
       variant={variant}
       {...props}
@@ -145,7 +145,7 @@ export type PromptInputSubmitProps = ComponentProps<typeof Button> & {
 
 export const PromptInputSubmit = ({
   className,
-  variant = 'default',
+  variant = 'primary',
   size = 'icon',
   status,
   children,
@@ -186,14 +186,16 @@ export type PromptInputModelSelectTriggerProps = ComponentProps<
 
 export const PromptInputModelSelectTrigger = ({
   className,
+  size = 'default',
   ...props
 }: PromptInputModelSelectTriggerProps) => (
   <SelectTrigger
     className={cn(
-      'border-none bg-transparent font-medium text-muted-foreground shadow-none transition-colors',
+      'border-none bg-transparent font-normal text-muted-foreground shadow-none transition-colors',
       'hover:bg-accent hover:text-foreground [&[aria-expanded="true"]]:bg-accent [&[aria-expanded="true"]]:text-foreground',
       className
     )}
+    size={size}
     {...props}
   />
 );
