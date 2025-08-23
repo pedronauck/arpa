@@ -336,15 +336,23 @@ IMPORTANT: After each step, the workflow will suspend. You must:
       if (!resumeData.next_step_required) {
         // Perform expert analysis if configured
         if (review_validation_type === "external" && models.expert) {
-          // Call expert model for validation
-          const expertAgent = dynamicReviewAgent("models.expert");
-          const expertContext = new RuntimeContext();
-          expertContext.set("models.expert", models.expert);
+          let expertAnalysis = {
+            validatedIssues: [],
+            additionalFindings: "Expert validation skipped due to error",
+            recommendation: "Review completed based on initial analysis"
+          };
+          
+          try {
+            // Call expert model for validation
+            console.log(`Starting expert validation with model: ${models.expert}`);
+            const expertAgent = dynamicReviewAgent("models.expert");
+            const expertContext = new RuntimeContext();
+            expertContext.set("models.expert", models.expert);
 
-          const expertResponse = await expertAgent.streamVNext(
-            {
-              role: "user",
-              content: `Perform expert validation of this code review:
+            const expertResponse = await expertAgent.streamVNext(
+              {
+                role: "user",
+                content: `Perform expert validation of this code review:
 Directory: ${directory}
 Review Type: ${review_type}
 Findings: ${currentState.findings}
@@ -353,31 +361,46 @@ Confidence: ${currentState.confidence}
 
 Validate the findings and provide your expert analysis. Output in strict JSON format:
 { "validatedIssues": [...], "additionalFindings": "...", "recommendation": "..." }`,
-            },
-            { runtimeContext: expertContext, format: "aisdk" }
-          );
+              },
+              { runtimeContext: expertContext, format: "aisdk" }
+            );
 
-          let expertText = "";
-          for await (const chunk of expertResponse.textStream) {
-            expertText += chunk;
-          }
-
-          let expertAnalysis;
-          try {
-            const cleanedExpertText = cleanJsonResponse(expertText);
-            if (!cleanedExpertText) {
-              throw new Error("Expert response is empty after cleaning");
+            let expertText = "";
+            try {
+              // Safely iterate through the text stream with error handling
+              if (expertResponse && expertResponse.textStream) {
+                for await (const chunk of expertResponse.textStream) {
+                  if (chunk) {
+                    expertText += chunk;
+                  }
+                }
+              }
+            } catch (streamError) {
+              console.error("Error reading expert response stream:", streamError);
+              expertText = ""; // Continue with empty text
             }
-            expertAnalysis = JSON.parse(cleanedExpertText);
-          } catch (parseError) {
-            console.error("Failed to parse expert response:", expertText.substring(0, 1000));
-            console.error("Parse error:", parseError);
-            // Return a default expert analysis on parse error
-            expertAnalysis = {
-              validatedIssues: [],
-              additionalFindings: "Expert analysis could not be parsed",
-              recommendation: "Manual review recommended due to parsing error"
-            };
+
+            // Try to parse the expert response
+            try {
+              // Only try to parse if we have actual content
+              if (expertText && expertText.trim()) {
+                const cleanedExpertText = cleanJsonResponse(expertText);
+                if (!cleanedExpertText) {
+                  throw new Error("Expert response is empty after cleaning");
+                }
+                expertAnalysis = JSON.parse(cleanedExpertText);
+              } else {
+                // No expert text received, use default
+                throw new Error("No expert response received");
+              }
+            } catch (parseError) {
+              console.error("Failed to parse expert response:", expertText ? expertText.substring(0, 1000) : "Empty response");
+              console.error("Parse error:", parseError);
+              // Keep the default expert analysis on parse error
+            }
+          } catch (expertError) {
+            console.error("Error during expert validation:", expertError);
+            // Keep the default expert analysis
           }
 
           // Merge expert findings

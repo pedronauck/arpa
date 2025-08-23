@@ -52,7 +52,7 @@ export const getChatMessages = query({
 export const addMessage = mutation({
     args: {
         chatId: v.id('chats'),
-        content: v.string(),
+        content: v.any(), // Changed to v.any() to support both strings and complex JSON
         role: v.union(v.literal('user'), v.literal('assistant')),
     },
     handler: async (ctx, args) => {

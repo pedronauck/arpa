@@ -4,7 +4,10 @@
       "Bash(bun list:*)",
       "mcp__perplexity-mcp__perplexity_search_web",
       "mcp__mastra__mastraDocs",
-      "mcp__mastra__mastraExamples"
+      "mcp__mastra__mastraExamples",
+      "mcp__serena__list_dir",
+      "Bash(grep:*)",
+      "mcp__zen__debug"
     ],
     "additionalDirectories": [
       "/Users/pedronauck/Dev/ai/zen-mcp-server/"

@@ -24,7 +24,7 @@ export function useAppChat({ chatId, onMessageSent }: UseAppChatOptions) {
   const sendUserMessage = useCallback(async (content: string) => {
     try {
       setIsSubmitting(true);
-      
+
       // First, save the user message to Convex (optimistic UI)
       await sendMessage({
         chatId,
@@ -37,7 +37,7 @@ export function useAppChat({ chatId, onMessageSent }: UseAppChatOptions) {
 
       // Then send to AI backend
       await chatHelpers.sendMessage({ text: content });
-      
+
       // Save assistant response when it arrives
       const lastMessage = chatHelpers.messages[chatHelpers.messages.length - 1];
       if (lastMessage?.role === 'assistant') {
@@ -45,7 +45,7 @@ export function useAppChat({ chatId, onMessageSent }: UseAppChatOptions) {
           .filter(part => part.type === 'text')
           .map(part => (part as any).text)
           .join('');
-        
+
         if (assistantText) {
           await sendMessage({
             chatId,
@@ -54,7 +54,7 @@ export function useAppChat({ chatId, onMessageSent }: UseAppChatOptions) {
           });
         }
       }
-      
+
     } catch (error) {
       console.error('Failed to send message:', error);
       toast.error('Failed to send message. Please try again.');

@@ -11,7 +11,7 @@ export default defineSchema({
 
     messages: defineTable({
         chatId: v.id('chats'),
-        content: v.string(),
+        content: v.any(), // Changed to v.any() to support both strings and complex JSON structures
         role: v.union(v.literal('user'), v.literal('assistant')),
         timestamp: v.number(),
         order: v.number(), // To maintain message order within a chat
