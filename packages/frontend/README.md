@@ -12,27 +12,29 @@ A VSCode extension that provides an AI-powered chatbot interface using OpenAI's 
 
 ## Prerequisites
 
-- **Node.js** (v16 or higher)
-- **pnpm** package manager
+- **Bun** runtime and package manager
 - **VSCode** (v1.90.0 or higher)
 - **OpenAI API Key**
 
 ## Setup
 
 1. **Clone the repository:**
+
    ```bash
    git clone <repository-url>
    cd arpa
    ```
 
 2. **Install dependencies:**
+
    ```bash
-   pnpm install
+   bun install
    ```
 
 3. **Configure your OpenAI API key:**
-   
+
    Create a `.env` file in the project root:
+
    ```bash
    # .env
    OPENAI_API_KEY=your-openai-api-key-here
@@ -46,13 +48,15 @@ A VSCode extension that provides an AI-powered chatbot interface using OpenAI's 
 ## Running the Extension
 
 1. **Open the project in VSCode:**
+
    ```bash
    code .
    ```
 
 2. **Build the extension:**
+
    ```bash
-   pnpm esbuild:base
+   bun esbuild:base
    ```
 
 3. **Start debugging (launches Extension Development Host):**
@@ -94,21 +98,24 @@ src/
 
 ## Development
 
-- **Watch mode**: `pnpm esbuild:watch` - Auto-rebuilds on file changes
-- **Clean build**: `pnpm clean && pnpm esbuild:base`
-- **Lint**: `pnpm lint`
+- **Watch mode**: `bun esbuild:watch` - Auto-rebuilds on file changes
+- **Clean build**: `bun clean && bun esbuild:base`
+- **Lint**: `bun lint`
 
 ## Troubleshooting
 
 **Extension command not found:**
-- Ensure the extension is built: `pnpm esbuild:base`
+
+- Ensure the extension is built: `bun esbuild:base`
 - Restart the Extension Development Host window
 - Check the debug console for errors
 
 **API key not working:**
+
 - Verify the `.env` file is in the project root
 - Check your OpenAI API key is valid
 - Ensure you have API credits available
 
 **Debug console shows path errors:**
+
 - Check that the workspace folder is correctly set to the `arpa` directory

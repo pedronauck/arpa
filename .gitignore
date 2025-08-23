@@ -15,3 +15,14 @@ temp-*.db
 temp-*.db-*
 *.db-shm
 *.db-wal
+out
+node_modules
+.vscode-test/
+*.vsix
+
+# esbuild-visualizer
+meta.json
+stats.html
+
+.env
+

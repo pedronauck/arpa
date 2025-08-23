@@ -3,11 +3,11 @@
     "configurations": [
         {
             "args": [
-                "--extensionDevelopmentPath=${workspaceFolder}"
+                "--extensionDevelopmentPath=${workspaceFolder}/packages/frontend"
             ],
             "name": "Launch ARPA Extension",
             "outFiles": [
-                "${workspaceFolder}/out/**/*.js"
+                "${workspaceFolder}/packages/frontend/out/**/*.js"
             ],
             "request": "launch",
             "type": "extensionHost"
