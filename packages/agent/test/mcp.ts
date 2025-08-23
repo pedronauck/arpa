@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * Test script for the Mastra Code Review MCP Server
+ * Test script for the Arpa MCP
  *
  * This script tests the MCP server by:
  * 1. Starting the server as a subprocess
@@ -22,7 +22,7 @@ async function main() {
     // Create a client transport that launches the server
     const transport = new StdioClientTransport({
         command: "bun",
-        args: ["run", "./src/mastra/mcp-server/index.ts"],
+        args: ["run", "./src/mcp/index.ts"],
     });
 
     // Create the client

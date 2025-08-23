@@ -14,7 +14,7 @@ dotenv.config();
 // Initialize the MCP server
 const server = new Server(
     {
-        name: "Mastra Code Review Server",
+        name: "Arpa MCP",
         version: "1.0.0",
     },
     {
@@ -98,11 +98,11 @@ async function main() {
     await server.connect(transport);
 
     // Log to stderr (stdout is used for MCP communication)
-    console.error("Mastra Code Review MCP Server started");
+    console.error("Arpa MCP started");
 
     // Handle graceful shutdown
     process.on("SIGINT", async () => {
-        console.error("Shutting down Mastra Code Review MCP Server...");
+        console.error("Shutting down Arpa MCP...");
         await server.close();
         process.exit(0);
     });

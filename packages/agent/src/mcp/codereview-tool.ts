@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { mastra } from "../index";
+import { mastra } from "../mastra/index";
 
 // State management for suspended workflow runs
 const workflowRuns = new Map<
