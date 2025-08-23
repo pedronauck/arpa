@@ -1,0 +1,755 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Hono Backend Best Practices
+
+<core_philosophy>
+**Pragmatic Clean Architecture Philosophy:**
+- Keep it simple - avoid over-engineering and unnecessary abstractions
+- Write code for humans first, computers second
+- Follow SOLID principles pragmatically, not dogmatically
+- DRY when it makes sense, but don't create complex abstractions for one-time use
+</core_philosophy>
+
+## Project Structure
+
+<project_structure>
+**Simple and Scalable Organization:**
+</project_structure>
+
+```
+/src
+├── /routes          # HTTP route handlers
+├── /services        # Business logic
+├── /repositories    # Data access layer
+├── /middleware      # Shared middleware
+├── /utils           # Utility functions
+├── /types           # TypeScript types
+└── app.ts          # Application entry point
+```
+
+## Route Organization
+
+<route_organization>
+**Clean Route Management:**
+- Keep route handlers thin - delegate to services
+- Use meaningful HTTP status codes
+- Implement proper error handling
+- Group related routes logically
+</route_organization>
+
+```typescript
+// routes/users.ts
+import { Hono } from 'hono'
+import { z } from 'zod'
+import { UserService } from '../services/UserService'
+import { validateBody } from '../middleware/validation'
+
+const users = new Hono()
+const userService = new UserService()
+
+// Input validation schemas
+const createUserSchema = z.object({
+  name: z.string().min(2).max(50),
+  email: z.string().email(),
+  age: z.number().min(18).max(120),
+})
+
+const updateUserSchema = createUserSchema.partial()
+
+// Routes
+users.get('/', async (c) => {
+  const page = Number(c.req.query('page')) || 1
+  const limit = Number(c.req.query('limit')) || 10
+  
+  const users = await userService.getUsers({ page, limit })
+  return c.json({ users, page, limit })
+})
+
+users.get('/:id', async (c) => {
+  const id = c.req.param('id')
+  
+  const user = await userService.getUserById(id)
+  if (!user) {
+    return c.json({ error: 'User not found' }, 404)
+  }
+  
+  return c.json({ user })
+})
+
+users.post('/', validateBody(createUserSchema), async (c) => {
+  const data = c.req.valid('json')
+  
+  const user = await userService.createUser(data)
+  return c.json({ user }, 201)
+})
+
+users.put('/:id', validateBody(updateUserSchema), async (c) => {
+  const id = c.req.param('id')
+  const data = c.req.valid('json')
+  
+  const user = await userService.updateUser(id, data)
+  if (!user) {
+    return c.json({ error: 'User not found' }, 404)
+  }
+  
+  return c.json({ user })
+})
+
+users.delete('/:id', async (c) => {
+  const id = c.req.param('id')
+  
+  const deleted = await userService.deleteUser(id)
+  if (!deleted) {
+    return c.json({ error: 'User not found' }, 404)
+  }
+  
+  return c.json({ message: 'User deleted successfully' })
+})
+
+export { users }
+```
+
+## Service Layer
+
+<service_layer>
+**Business Logic Encapsulation:**
+- Keep business logic in services
+- Make services testable and pure when possible
+- Use dependency injection for external dependencies
+- Handle errors gracefully with proper types
+</service_layer>
+
+```typescript
+// services/UserService.ts
+import { UserRepository } from '../repositories/UserRepository'
+import { EmailService } from './EmailService'
+import { AppError } from '../utils/errors'
+
+export interface CreateUserData {
+  name: string
+  email: string
+  age: number
+}
+
+export interface UpdateUserData {
+  name?: string
+  email?: string
+  age?: number
+}
+
+export interface PaginationOptions {
+  page: number
+  limit: number
+}
+
+export class UserService {
+  constructor(
+    private userRepository = new UserRepository(),
+    private emailService = new EmailService()
+  ) {}
+
+  async getUsers(options: PaginationOptions) {
+    const { page, limit } = options
+    const offset = (page - 1) * limit
+    
+    const [users, total] = await Promise.all([
+      this.userRepository.findMany({ offset, limit }),
+      this.userRepository.count()
+    ])
+    
+    return {
+      users,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit)
+    }
+  }
+
+  async getUserById(id: string) {
+    const user = await this.userRepository.findById(id)
+    return user
+  }
+
+  async createUser(data: CreateUserData) {
+    // Check if email already exists
+    const existingUser = await this.userRepository.findByEmail(data.email)
+    if (existingUser) {
+      throw new AppError('Email already exists', 400)
+    }
+
+    // Create user
+    const user = await this.userRepository.create(data)
+    
+    // Send welcome email (don't await - fire and forget)
+    this.emailService.sendWelcomeEmail(user.email, user.name)
+      .catch(error => console.error('Failed to send welcome email:', error))
+    
+    return user
+  }
+
+  async updateUser(id: string, data: UpdateUserData) {
+    const existingUser = await this.userRepository.findById(id)
+    if (!existingUser) {
+      return null
+    }
+
+    // If email is being updated, check for conflicts
+    if (data.email && data.email !== existingUser.email) {
+      const emailExists = await this.userRepository.findByEmail(data.email)
+      if (emailExists) {
+        throw new AppError('Email already exists', 400)
+      }
+    }
+
+    const updatedUser = await this.userRepository.update(id, data)
+    return updatedUser
+  }
+
+  async deleteUser(id: string) {
+    const user = await this.userRepository.findById(id)
+    if (!user) {
+      return false
+    }
+
+    await this.userRepository.delete(id)
+    return true
+  }
+}
+```
+
+## Repository Pattern
+
+<repository_pattern>
+**Simple Data Access Layer:**
+- Keep database queries in repositories
+- Use simple interfaces, not complex abstractions
+- Handle database errors appropriately
+- Use transactions when needed
+</repository_pattern>
+
+```typescript
+// repositories/UserRepository.ts
+import { Database } from 'bun:sqlite'
+import type { CreateUserData, UpdateUserData } from '../services/UserService'
+
+export interface User {
+  id: string
+  name: string
+  email: string
+  age: number
+  createdAt: string
+  updatedAt: string
+}
+
+export class UserRepository {
+  private db: Database
+
+  constructor() {
+    this.db = new Database('app.db')
+    this.initTables()
+  }
+
+  private initTables() {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        age INTEGER NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `)
+  }
+
+  async findMany({ offset, limit }: { offset: number; limit: number }): Promise<User[]> {
+    const query = this.db.query(`
+      SELECT id, name, email, age, created_at as createdAt, updated_at as updatedAt
+      FROM users
+      ORDER BY created_at DESC
+      LIMIT ? OFFSET ?
+    `)
+    
+    return query.all(limit, offset) as User[]
+  }
+
+  async findById(id: string): Promise<User | null> {
+    const query = this.db.query(`
+      SELECT id, name, email, age, created_at as createdAt, updated_at as updatedAt
+      FROM users
+      WHERE id = ?
+    `)
+    
+    return query.get(id) as User | null
+  }
+
+  async findByEmail(email: string): Promise<User | null> {
+    const query = this.db.query(`
+      SELECT id, name, email, age, created_at as createdAt, updated_at as updatedAt
+      FROM users
+      WHERE email = ?
+    `)
+    
+    return query.get(email) as User | null
+  }
+
+  async count(): Promise<number> {
+    const query = this.db.query('SELECT COUNT(*) as count FROM users')
+    const result = query.get() as { count: number }
+    return result.count
+  }
+
+  async create(data: CreateUserData): Promise<User> {
+    const id = crypto.randomUUID()
+    const now = new Date().toISOString()
+    
+    const insert = this.db.query(`
+      INSERT INTO users (id, name, email, age, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    
+    insert.run(id, data.name, data.email, data.age, now, now)
+    
+    const user = await this.findById(id)
+    if (!user) {
+      throw new Error('Failed to create user')
+    }
+    
+    return user
+  }
+
+  async update(id: string, data: UpdateUserData): Promise<User | null> {
+    const updates: string[] = []
+    const values: any[] = []
+    
+    if (data.name !== undefined) {
+      updates.push('name = ?')
+      values.push(data.name)
+    }
+    
+    if (data.email !== undefined) {
+      updates.push('email = ?')
+      values.push(data.email)
+    }
+    
+    if (data.age !== undefined) {
+      updates.push('age = ?')
+      values.push(data.age)
+    }
+    
+    if (updates.length === 0) {
+      return this.findById(id)
+    }
+    
+    updates.push('updated_at = ?')
+    values.push(new Date().toISOString())
+    values.push(id)
+    
+    const query = this.db.query(`
+      UPDATE users
+      SET ${updates.join(', ')}
+      WHERE id = ?
+    `)
+    
+    query.run(...values)
+    return this.findById(id)
+  }
+
+  async delete(id: string): Promise<void> {
+    const query = this.db.query('DELETE FROM users WHERE id = ?')
+    query.run(id)
+  }
+}
+```
+
+## Middleware
+
+<middleware_patterns>
+**Reusable Middleware Components:**
+- Keep middleware focused and single-purpose
+- Use middleware for cross-cutting concerns
+- Make middleware configurable when needed
+- Handle errors gracefully
+</middleware_patterns>
+
+```typescript
+// middleware/validation.ts
+import { zValidator } from '@hono/zod-validator'
+import type { z } from 'zod'
+
+export const validateBody = <T extends z.ZodType>(schema: T) => {
+  return zValidator('json', schema, (result, c) => {
+    if (!result.success) {
+      return c.json({
+        error: 'Validation failed',
+        details: result.error.flatten().fieldErrors
+      }, 400)
+    }
+  })
+}
+
+export const validateQuery = <T extends z.ZodType>(schema: T) => {
+  return zValidator('query', schema, (result, c) => {
+    if (!result.success) {
+      return c.json({
+        error: 'Invalid query parameters',
+        details: result.error.flatten().fieldErrors
+      }, 400)
+    }
+  })
+}
+
+// middleware/auth.ts
+import { createMiddleware } from 'hono/factory'
+import { verify } from 'hono/jwt'
+import { AppError } from '../utils/errors'
+
+export const authMiddleware = createMiddleware(async (c, next) => {
+  const authHeader = c.req.header('Authorization')
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return c.json({ error: 'Missing or invalid authorization header' }, 401)
+  }
+  
+  const token = authHeader.slice(7)
+  
+  try {
+    const payload = await verify(token, process.env.JWT_SECRET!)
+    c.set('user', payload)
+    await next()
+  } catch (error) {
+    return c.json({ error: 'Invalid token' }, 401)
+  }
+})
+
+// middleware/cors.ts
+import { cors } from 'hono/cors'
+
+export const corsMiddleware = cors({
+  origin: (origin) => {
+    // Allow all origins in development
+    if (process.env.NODE_ENV === 'development') {
+      return origin
+    }
+    
+    // Only allow specific origins in production
+    const allowedOrigins = ['https://myapp.com', 'https://www.myapp.com']
+    return allowedOrigins.includes(origin) ? origin : null
+  },
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+})
+
+// middleware/logger.ts
+import { logger } from 'hono/logger'
+
+export const loggerMiddleware = logger((message) => {
+  console.log(message)
+})
+
+// middleware/rateLimiter.ts
+import { createMiddleware } from 'hono/factory'
+
+interface RateLimitOptions {
+  windowMs: number
+  maxRequests: number
+}
+
+export const rateLimiter = (options: RateLimitOptions) => {
+  const requests = new Map<string, number[]>()
+  
+  return createMiddleware(async (c, next) => {
+    const ip = c.req.header('x-forwarded-for') || c.req.header('x-real-ip') || 'unknown'
+    const now = Date.now()
+    
+    // Clean old requests
+    const userRequests = requests.get(ip) || []
+    const validRequests = userRequests.filter(time => now - time < options.windowMs)
+    
+    if (validRequests.length >= options.maxRequests) {
+      return c.json({ error: 'Too many requests' }, 429)
+    }
+    
+    validRequests.push(now)
+    requests.set(ip, validRequests)
+    
+    await next()
+  })
+}
+```
+
+## Error Handling
+
+<error_handling>
+**Comprehensive Error Management:**
+- Create custom error classes for different scenarios
+- Use consistent error response format
+- Log errors appropriately
+- Don't expose internal details to clients
+</error_handling>
+
+```typescript
+// utils/errors.ts
+export class AppError extends Error {
+  constructor(
+    message: string,
+    public statusCode: number = 500,
+    public code?: string
+  ) {
+    super(message)
+    this.name = 'AppError'
+  }
+}
+
+export class ValidationError extends AppError {
+  constructor(message: string, public details?: any) {
+    super(message, 400, 'VALIDATION_ERROR')
+    this.name = 'ValidationError'
+  }
+}
+
+export class NotFoundError extends AppError {
+  constructor(resource: string) {
+    super(`${resource} not found`, 404, 'NOT_FOUND')
+    this.name = 'NotFoundError'
+  }
+}
+
+export class UnauthorizedError extends AppError {
+  constructor(message: string = 'Unauthorized') {
+    super(message, 401, 'UNAUTHORIZED')
+    this.name = 'UnauthorizedError'
+  }
+}
+
+// middleware/errorHandler.ts
+import { createMiddleware } from 'hono/factory'
+import { AppError } from '../utils/errors'
+
+export const errorHandler = createMiddleware(async (c, next) => {
+  try {
+    await next()
+  } catch (error) {
+    console.error('Error:', error)
+    
+    if (error instanceof AppError) {
+      return c.json({
+        error: error.message,
+        code: error.code,
+        ...(error instanceof ValidationError && { details: error.details })
+      }, error.statusCode)
+    }
+    
+    // Don't expose internal errors
+    return c.json({
+      error: 'Internal server error'
+    }, 500)
+  }
+})
+```
+
+## Application Setup
+
+<application_setup>
+**Clean Application Bootstrap:**
+- Keep app.ts focused on setup and configuration
+- Use environment variables for configuration
+- Set up middleware in logical order
+- Handle graceful shutdown
+</application_setup>
+
+```typescript
+// app.ts
+import { Hono } from 'hono'
+import { users } from './routes/users'
+import { corsMiddleware } from './middleware/cors'
+import { loggerMiddleware } from './middleware/logger'
+import { errorHandler } from './middleware/errorHandler'
+import { rateLimiter } from './middleware/rateLimiter'
+
+const app = new Hono()
+
+// Global middleware
+app.use('*', errorHandler)
+app.use('*', loggerMiddleware)
+app.use('*', corsMiddleware)
+app.use('*', rateLimiter({ windowMs: 15 * 60 * 1000, maxRequests: 100 }))
+
+// Health check
+app.get('/health', (c) => {
+  return c.json({ status: 'ok', timestamp: new Date().toISOString() })
+})
+
+// API routes
+app.route('/api/users', users)
+
+// 404 handler
+app.notFound((c) => {
+  return c.json({ error: 'Not found' }, 404)
+})
+
+export default app
+
+// server.ts
+import app from './app'
+
+const port = Number(process.env.PORT) || 3000
+
+const server = Bun.serve({
+  port,
+  fetch: app.fetch,
+})
+
+console.log(`Server running at http://localhost:${port}`)
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('Shutting down gracefully...')
+  server.stop()
+  process.exit(0)
+})
+
+process.on('SIGTERM', () => {
+  console.log('Shutting down gracefully...')
+  server.stop()
+  process.exit(0)
+})
+```
+
+## Testing
+
+<testing_strategies>
+**Practical Testing Approach:**
+- Test business logic in services
+- Use integration tests for API endpoints
+- Mock external dependencies
+- Keep tests simple and focused
+</testing_strategies>
+
+```typescript
+// tests/UserService.test.ts
+import { describe, it, expect, beforeEach, mock } from 'bun:test'
+import { UserService } from '../src/services/UserService'
+import { UserRepository } from '../src/repositories/UserRepository'
+import { EmailService } from '../src/services/EmailService'
+import { AppError } from '../src/utils/errors'
+
+describe('UserService', () => {
+  let userService: UserService
+  let mockUserRepository: any
+  let mockEmailService: any
+
+  beforeEach(() => {
+    mockUserRepository = {
+      findMany: mock(() => Promise.resolve([])),
+      findById: mock(() => Promise.resolve(null)),
+      findByEmail: mock(() => Promise.resolve(null)),
+      count: mock(() => Promise.resolve(0)),
+      create: mock(() => Promise.resolve({ id: '1', name: 'John', email: 'john@example.com', age: 30 })),
+      update: mock(() => Promise.resolve(null)),
+      delete: mock(() => Promise.resolve()),
+    }
+
+    mockEmailService = {
+      sendWelcomeEmail: mock(() => Promise.resolve()),
+    }
+
+    userService = new UserService(mockUserRepository, mockEmailService)
+  })
+
+  describe('createUser', () => {
+    it('should create a user successfully', async () => {
+      const userData = { name: 'John', email: 'john@example.com', age: 30 }
+      
+      const user = await userService.createUser(userData)
+      
+      expect(mockUserRepository.findByEmail).toHaveBeenCalledWith('john@example.com')
+      expect(mockUserRepository.create).toHaveBeenCalledWith(userData)
+      expect(user).toEqual({ id: '1', name: 'John', email: 'john@example.com', age: 30 })
+    })
+
+    it('should throw error if email already exists', async () => {
+      const userData = { name: 'John', email: 'john@example.com', age: 30 }
+      mockUserRepository.findByEmail.mockResolvedValue({ id: '2', email: 'john@example.com' })
+      
+      expect(userService.createUser(userData)).rejects.toThrow(new AppError('Email already exists', 400))
+    })
+  })
+})
+
+// tests/api/users.test.ts
+import { describe, it, expect } from 'bun:test'
+import app from '../../src/app'
+
+describe('Users API', () => {
+  it('should get users with pagination', async () => {
+    const req = new Request('http://localhost/api/users?page=1&limit=10')
+    const res = await app.fetch(req)
+    
+    expect(res.status).toBe(200)
+    
+    const data = await res.json()
+    expect(data).toHaveProperty('users')
+    expect(data).toHaveProperty('page', 1)
+    expect(data).toHaveProperty('limit', 10)
+  })
+
+  it('should return 404 for non-existent user', async () => {
+    const req = new Request('http://localhost/api/users/non-existent')
+    const res = await app.fetch(req)
+    
+    expect(res.status).toBe(404)
+    
+    const data = await res.json()
+    expect(data).toEqual({ error: 'User not found' })
+  })
+
+  it('should validate request body', async () => {
+    const req = new Request('http://localhost/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: '', email: 'invalid-email' })
+    })
+    
+    const res = await app.fetch(req)
+    
+    expect(res.status).toBe(400)
+    
+    const data = await res.json()
+    expect(data).toHaveProperty('error', 'Validation failed')
+    expect(data).toHaveProperty('details')
+  })
+})
+```
+
+<deployment_considerations>
+**Production Deployment:**
+- Use environment variables for all configuration
+- Implement proper logging and monitoring
+- Set up health checks and graceful shutdown
+- Use process managers or containers for reliability
+- Configure reverse proxy for static assets and SSL
+</deployment_considerations>
+
+<best_practices_summary>
+**Essential Hono Backend Guidelines:**
+1. Keep architecture simple and pragmatic
+2. Separate concerns with routes, services, and repositories
+3. Use dependency injection for testability
+4. Implement comprehensive error handling
+5. Validate inputs at API boundaries
+6. Use middleware for cross-cutting concerns
+7. Write focused, testable business logic
+8. Handle database operations in repositories
+9. Use consistent response formats
+10. Follow security best practices without over-engineering
+</best_practices_summary>
+
+<enforcement_policy>
+**MANDATORY:** These patterns must be followed consistently across all Hono backend implementations while avoiding unnecessary complexity.
+</enforcement_policy>

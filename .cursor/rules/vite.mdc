@@ -1,0 +1,233 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Vite Best Practices
+
+<core_configuration>
+**Essential Vite Configuration Principles:**
+- Use TypeScript config files (vite.config.ts) for type safety
+- Keep configuration minimal - Vite's defaults are excellent
+- Define clear environment modes (development, staging, production)
+- Use defineConfig helper for better IDE support
+</core_configuration>
+
+## Build Optimization
+
+<build_optimization>
+**Critical Build Performance Patterns:**
+- Create manual chunks for vendor libraries to improve caching
+- Use rollup-plugin-visualizer to analyze bundle size
+- Implement tree-shaking optimizations
+- Configure proper asset handling
+</build_optimization>
+
+```javascript
+// vite.config.ts
+import { defineConfig } from 'vite'
+import { visualizer } from 'rollup-plugin-visualizer'
+
+export default defineConfig({
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          router: ['@tanstack/react-router'],
+          query: ['@tanstack/react-query'],
+          ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu'],
+        },
+      },
+    },
+    sourcemap: true,
+    minify: 'terser',
+    terserOptions: {
+      compress: {
+        drop_console: true,
+        drop_debugger: true,
+      },
+    },
+  },
+  plugins: [
+    // ... other plugins
+    visualizer({
+      filename: 'dist/stats.html',
+      open: true,
+      gzipSize: true,
+    }),
+  ],
+})
+```
+
+## Development Workflow
+
+<development_workflow>
+**Enhanced Development Experience:**
+- Configure HMR boundaries properly
+- Use proper import resolution
+- Set up environment variables correctly
+- Implement development-specific optimizations
+</development_workflow>
+
+```typescript
+// vite.config.ts
+export default defineConfig({
+  server: {
+    port: 3000,
+    open: true,
+    hmr: {
+      overlay: true,
+    },
+  },
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, './src'),
+      '@/components': path.resolve(__dirname, './src/components'),
+      '@/utils': path.resolve(__dirname, './src/utils'),
+    },
+  },
+  define: {
+    __APP_VERSION__: JSON.stringify(process.env.npm_package_version),
+  },
+})
+```
+
+## Plugin Ecosystem
+
+<plugin_ecosystem>
+**Essential Plugin Configuration:**
+- Use official plugins for React, TypeScript
+- Configure Oxlint and Prettier integration
+- Set up testing with Vitest
+- Add PWA capabilities when needed
+</plugin_ecosystem>
+
+```typescript
+// vite.config.ts
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import { TanStackRouterVite } from '@tanstack/router-vite-plugin'
+
+export default defineConfig({
+  plugins: [
+    react(),
+    TanStackRouterVite(),
+  ],
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.ts'],
+  },
+})
+```
+
+## Environment Management
+
+<environment_management>
+**Robust Environment Configuration:**
+- Use .env files for different environments
+- Validate environment variables at build time
+- Implement proper type safety for env vars
+- Never expose sensitive data to client
+</environment_management>
+
+```typescript
+// env.d.ts
+interface ImportMetaEnv {
+  readonly VITE_API_URL: string
+  readonly VITE_APP_TITLE: string
+  readonly VITE_ENABLE_ANALYTICS: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
+// utils/env.ts
+import { z } from 'zod'
+
+const envSchema = z.object({
+  VITE_API_URL: z.string().url(),
+  VITE_APP_TITLE: z.string().min(1),
+  VITE_ENABLE_ANALYTICS: z.enum(['true', 'false']),
+})
+
+export const env = envSchema.parse(import.meta.env)
+```
+
+## Development Workflow
+- Configure server.host for network access during development
+- Use server.proxy for API development
+- Enable server.cors when needed
+- Configure HMR port for container environments
+
+## Asset Handling
+- Use import.meta.glob for dynamic imports
+- Optimize images with vite-plugin-image-optimizer
+- Use ?url suffix for explicit URL imports
+- Leverage ?raw suffix for string imports
+- Configure assetsInclude for custom asset types
+
+## Module Federation
+- Use vite-plugin-federation for micro-frontends
+- Keep shared dependencies minimal
+- Version shared modules carefully
+- Test integration thoroughly
+
+## Path Aliases
+```javascript
+resolve: {
+  alias: {
+    '@': path.resolve(__dirname, './src'),
+    '@components': path.resolve(__dirname, './src/components'),
+    '@hooks': path.resolve(__dirname, './src/hooks'),
+    '@utils': path.resolve(__dirname, './src/utils')
+  }
+}
+```
+
+## CSS Handling
+- Use CSS modules for component styles
+- Configure css.devSourcemap for debugging
+- Use PostCSS for autoprefixing
+- Leverage css.preprocessorOptions for global variables
+
+## Production Deployment
+- Use vite preview to test production builds locally
+- Configure base path for subdirectory deployments
+- Enable gzip/brotli compression on server
+- Use CDN for static assets
+- Implement proper cache busting
+
+## SSR Configuration
+- Use vite.ssrLoadModule for server-side code
+- Configure ssr.external for Node.js modules
+- Handle SSR-specific aliases separately
+- Use proper build entries for client/server
+
+## Security Considerations
+- Validate and sanitize all user inputs
+- Use Content Security Policy headers
+- Keep Vite and plugins updated
+- Audit dependencies regularly
+- Configure CORS properly
+
+## Testing Integration
+- Use vitest for unit testing (same config as Vite)
+- Configure test environment properly
+- Use happy-dom or jsdom for DOM testing
+- Integrate with CI/CD pipelines
+
+## Common Optimizations
+- Prebundle large dependencies
+- Use optimizeDeps.include for forced optimization
+- Configure commonjsOptions for CJS compatibility
+- Minimize experimental features in production
+
+## Debugging Tips
+- Use --debug flag for detailed logs
+- Enable build.minify: false for debugging
+- Use Chrome DevTools for performance profiling
+- Monitor bundle size over time
+- Track Core Web Vitals metrics

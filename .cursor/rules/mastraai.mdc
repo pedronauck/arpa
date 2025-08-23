@@ -1,0 +1,503 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Core Principles
+- Design for reliability - AI APIs can fail or be slow
+- Implement graceful degradation for AI features
+- Cost-conscious implementation - every token counts
+- Privacy-first approach - handle user data responsibly
+
+## API Integration Setup
+- Use official SDK for type safety and best practices
+- Configure multiple models for different use cases
+- Implement proper authentication and key management
+- Set up environment-specific configurations
+```typescript
+// config/ai.ts
+import { MastraAI } from '@mastra/sdk'
+
+// Model configuration based on use case
+export const AI_MODELS = {
+  fast: 'gpt-3.5-turbo',      // Quick responses, low cost
+  balanced: 'gpt-4',           // General purpose
+  advanced: 'gpt-4-turbo',     // Complex reasoning
+  vision: 'gpt-4-vision',      // Image analysis
+  embedding: 'text-embedding-3-small', // Semantic search
+} as const
+
+// Initialize with environment-specific config
+export const ai = new MastraAI({
+  apiKey: process.env.MASTRA_API_KEY!,
+  organization: process.env.MASTRA_ORG_ID,
+  maxRetries: 3,
+  timeout: 30000, // 30 seconds
+})
+
+// Model router for intelligent selection
+export function selectModel(task: TaskType): string {
+  switch (task.complexity) {
+    case 'simple':
+      return AI_MODELS.fast
+    case 'complex':
+      return AI_MODELS.advanced
+    case 'visual':
+      return AI_MODELS.vision
+    default:
+      return AI_MODELS.balanced
+  }
+}
+```
+
+## Error Handling & Resilience
+- Implement exponential backoff with jitter
+- Distinguish between error types
+- Provide fallback behavior
+- Log errors for monitoring
+```typescript
+// utils/ai-error-handler.ts
+export class AIError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public retryable: boolean,
+    public statusCode?: number
+  ) {
+    super(message)
+    this.name = 'AIError'
+  }
+}
+
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  options: {
+    maxAttempts?: number
+    initialDelay?: number
+    maxDelay?: number
+    onRetry?: (attempt: number, error: Error) => void
+  } = {}
+): Promise<T> {
+  const {
+    maxAttempts = 3,
+    initialDelay = 1000,
+    maxDelay = 10000,
+    onRetry,
+  } = options
+
+  let lastError: Error
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn()
+    } catch (error) {
+      lastError = error as Error
+      
+      // Don't retry non-retryable errors
+      if (error instanceof AIError && !error.retryable) {
+        throw error
+      }
+      
+      if (attempt < maxAttempts) {
+        const delay = Math.min(
+          initialDelay * Math.pow(2, attempt - 1) + Math.random() * 1000,
+          maxDelay
+        )
+        
+        onRetry?.(attempt, lastError)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+
+  throw lastError!
+}
+```
+
+## Rate Limiting & Quota Management
+- Implement client-side rate limiting
+- Track token usage per user/feature
+- Queue requests during high load
+- Monitor usage against quotas
+```typescript
+// services/rate-limiter.ts
+interface RateLimiterOptions {
+  maxRequests: number
+  windowMs: number
+  maxQueueSize?: number
+}
+
+export class TokenBucket {
+  private tokens: number
+  private lastRefill: number
+  private queue: Array<() => void> = []
+
+  constructor(
+    private capacity: number,
+    private refillRate: number,
+    private maxQueueSize = 100
+  ) {
+    this.tokens = capacity
+    this.lastRefill = Date.now()
+  }
+
+  async acquire(): Promise<void> {
+    this.refill()
+
+    if (this.tokens > 0) {
+      this.tokens--
+      return
+    }
+
+    // Queue if at capacity
+    if (this.queue.length >= this.maxQueueSize) {
+      throw new AIError(
+        'Rate limit queue full',
+        'QUEUE_FULL',
+        false,
+        429
+      )
+    }
+
+    return new Promise((resolve) => {
+      this.queue.push(resolve)
+    })
+  }
+
+  private refill(): void {
+    const now = Date.now()
+    const timePassed = now - this.lastRefill
+    const tokensToAdd = (timePassed / 1000) * this.refillRate
+    
+    this.tokens = Math.min(this.capacity, this.tokens + tokensToAdd)
+    this.lastRefill = now
+
+    // Process queue
+    while (this.tokens > 0 && this.queue.length > 0) {
+      this.tokens--
+      const resolve = this.queue.shift()!
+      resolve()
+    }
+  }
+}
+
+// Usage tracking
+export class UsageTracker {
+  private usage = new Map<string, { tokens: number; cost: number }>()
+
+  track(userId: string, tokens: number, cost: number): void {
+    const current = this.usage.get(userId) || { tokens: 0, cost: 0 }
+    this.usage.set(userId, {
+      tokens: current.tokens + tokens,
+      cost: current.cost + cost,
+    })
+  }
+
+  getUsage(userId: string): { tokens: number; cost: number } {
+    return this.usage.get(userId) || { tokens: 0, cost: 0 }
+  }
+}
+```
+
+## Caching Strategies
+- Cache by semantic similarity, not just exact matches
+- Implement TTL based on data volatility
+- Use Redis for distributed caching
+- Monitor cache hit rates
+```typescript
+// services/ai-cache.ts
+import { Redis } from 'ioredis'
+import { createHash } from 'crypto'
+
+export class AICache {
+  constructor(
+    private redis: Redis,
+    private defaultTTL = 3600 // 1 hour
+  ) {}
+
+  private generateKey(
+    prompt: string,
+    model: string,
+    params: Record<string, any>
+  ): string {
+    const hash = createHash('sha256')
+    hash.update(prompt)
+    hash.update(model)
+    hash.update(JSON.stringify(params))
+    return `ai:${hash.digest('hex')}`
+  }
+
+  async get<T>(
+    prompt: string,
+    model: string,
+    params: Record<string, any>
+  ): Promise<T | null> {
+    const key = this.generateKey(prompt, model, params)
+    const cached = await this.redis.get(key)
+    
+    if (cached) {
+      // Update metrics
+      await this.redis.hincrby('ai:metrics', 'cache_hits', 1)
+      return JSON.parse(cached)
+    }
+    
+    await this.redis.hincrby('ai:metrics', 'cache_misses', 1)
+    return null
+  }
+
+  async set<T>(
+    prompt: string,
+    model: string,
+    params: Record<string, any>,
+    value: T,
+    ttl?: number
+  ): Promise<void> {
+    const key = this.generateKey(prompt, model, params)
+    await this.redis.setex(
+      key,
+      ttl || this.defaultTTL,
+      JSON.stringify(value)
+    )
+  }
+
+  // Semantic caching with embeddings
+  async findSimilar(
+    embedding: number[],
+    threshold = 0.95
+  ): Promise<any | null> {
+    // Implementation depends on vector database
+    // Example with pgvector or Redis Vector Search
+    return null
+  }
+}
+```
+
+## Streaming Responses
+- Stream for better UX on long responses
+- Handle connection interruptions
+- Implement progress indicators
+- Buffer partial responses appropriately
+```typescript
+// hooks/useAIStream.ts
+import { useCallback, useState } from 'react'
+
+interface UseAIStreamOptions {
+  onToken?: (token: string) => void
+  onComplete?: (fullResponse: string) => void
+  onError?: (error: Error) => void
+}
+
+export function useAIStream(options: UseAIStreamOptions = {}) {
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [response, setResponse] = useState('')
+  const [error, setError] = useState<Error | null>(null)
+
+  const stream = useCallback(async (
+    prompt: string,
+    model: string = AI_MODELS.balanced
+  ) => {
+    setIsStreaming(true)
+    setResponse('')
+    setError(null)
+
+    try {
+      const stream = await ai.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        stream: true,
+        temperature: 0.7,
+      })
+
+      let fullResponse = ''
+      
+      for await (const chunk of stream) {
+        const token = chunk.choices[0]?.delta?.content || ''
+        fullResponse += token
+        
+        setResponse(fullResponse)
+        options.onToken?.(token)
+      }
+
+      options.onComplete?.(fullResponse)
+    } catch (err) {
+      const error = err as Error
+      setError(error)
+      options.onError?.(error)
+    } finally {
+      setIsStreaming(false)
+    }
+  }, [options])
+
+  return {
+    stream,
+    response,
+    isStreaming,
+    error,
+  }
+}
+```
+
+## Security & Privacy
+- Never send PII without user consent
+- Implement data anonymization
+- Use secure key storage
+- Audit AI interactions
+```typescript
+// utils/data-privacy.ts
+export class PrivacyGuard {
+  private patterns = {
+    email: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
+    phone: /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/g,
+    ssn: /\b\d{3}-\d{2}-\d{4}\b/g,
+    creditCard: /\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g,
+    // Add more patterns as needed
+  }
+
+  anonymize(text: string): string {
+    let anonymized = text
+    
+    // Replace emails
+    anonymized = anonymized.replace(this.patterns.email, '[EMAIL]')
+    
+    // Replace phone numbers
+    anonymized = anonymized.replace(this.patterns.phone, '[PHONE]')
+    
+    // Replace SSNs
+    anonymized = anonymized.replace(this.patterns.ssn, '[SSN]')
+    
+    // Replace credit cards
+    anonymized = anonymized.replace(this.patterns.creditCard, '[CC]')
+    
+    return anonymized
+  }
+
+  async audit(
+    userId: string,
+    action: string,
+    data: Record<string, any>
+  ): Promise<void> {
+    await db.aiAuditLog.create({
+      userId,
+      action,
+      timestamp: new Date(),
+      metadata: {
+        ...data,
+        // Don't log sensitive data
+        prompt: data.prompt ? this.anonymize(data.prompt) : undefined,
+      },
+    })
+  }
+}
+```
+
+## Cost Optimization
+- Choose the right model for each task
+- Implement prompt compression
+- Cache aggressively
+- Monitor and alert on usage spikes
+```typescript
+// services/cost-optimizer.ts
+export class CostOptimizer {
+  private modelCosts = {
+    'gpt-3.5-turbo': { input: 0.0005, output: 0.0015 },
+    'gpt-4': { input: 0.03, output: 0.06 },
+    'gpt-4-turbo': { input: 0.01, output: 0.03 },
+  }
+
+  estimateCost(
+    model: string,
+    inputTokens: number,
+    outputTokens: number
+  ): number {
+    const costs = this.modelCosts[model]
+    if (!costs) return 0
+    
+    return (
+      (inputTokens / 1000) * costs.input +
+      (outputTokens / 1000) * costs.output
+    )
+  }
+
+  compressPrompt(prompt: string): string {
+    // Remove extra whitespace
+    let compressed = prompt.replace(/\s+/g, ' ').trim()
+    
+    // Remove redundant instructions (be careful)
+    compressed = compressed.replace(
+      /please|could you|can you|would you/gi,
+      ''
+    )
+    
+    return compressed
+  }
+
+  async shouldUseCache(
+    estimatedCost: number,
+    cacheHitProbability: number
+  ): Promise<boolean> {
+    // Simple heuristic: cache if expected savings > cache overhead
+    const cacheOverhead = 0.0001 // Redis cost estimate
+    const expectedSavings = estimatedCost * cacheHitProbability
+    
+    return expectedSavings > cacheOverhead
+  }
+}
+```
+
+## Monitoring & Observability
+- Track latency percentiles
+- Monitor error rates by type
+- Alert on anomalies
+- Dashboard key metrics
+```typescript
+// services/ai-monitoring.ts
+export class AIMonitoring {
+  private metrics = {
+    latency: new Map<string, number[]>(),
+    errors: new Map<string, number>(),
+    usage: new Map<string, number>(),
+  }
+
+  recordLatency(operation: string, duration: number): void {
+    const latencies = this.metrics.latency.get(operation) || []
+    latencies.push(duration)
+    
+    // Keep only last 1000 measurements
+    if (latencies.length > 1000) {
+      latencies.shift()
+    }
+    
+    this.metrics.latency.set(operation, latencies)
+  }
+
+  recordError(operation: string, error: Error): void {
+    const count = this.metrics.errors.get(operation) || 0
+    this.metrics.errors.set(operation, count + 1)
+    
+    // Log to external service
+    console.error(`AI Error in ${operation}:`, error)
+  }
+
+  getPercentile(operation: string, percentile: number): number {
+    const latencies = this.metrics.latency.get(operation) || []
+    if (latencies.length === 0) return 0
+    
+    const sorted = [...latencies].sort((a, b) => a - b)
+    const index = Math.ceil((percentile / 100) * sorted.length) - 1
+    
+    return sorted[index]
+  }
+}
+```
+
+## Best Practices Summary
+1. Always implement retry logic with exponential backoff
+2. Cache responses based on semantic similarity
+3. Choose models based on task complexity
+4. Stream responses for better UX
+5. Monitor costs and set up alerts
+6. Implement privacy guards for sensitive data
+7. Use queuing for rate limit management
+8. Track detailed metrics for optimization
+9. Plan for graceful degradation
+10. Keep AI features optional/enhancing, not critical
