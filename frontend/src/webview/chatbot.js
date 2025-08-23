@@ -126,30 +126,39 @@ async function sendMessage() {
     // Clear input
     messageInput.value = '';
     
-    // If this is a new chat, create it first
+    // If this is a new chat, create it first and wait for the response
     if (isNewChat) {
         try {
-            const response = await vscode.postMessage({
+            // Create the chat first
+            vscode.postMessage({
                 command: 'createChat',
                 title: message.substring(0, 50) + (message.length > 50 ? '...' : ''),
                 userId: 'default-user'
             });
             
-            // This will be handled by the extension
+            // Wait a bit for the chat to be created, then send the message
+            setTimeout(() => {
+                sendMessageToBackend(message);
+            }, 100);
+            
+            return; // Exit early, message will be sent after chat creation
         } catch (error) {
             console.error('Error creating chat:', error);
         }
     }
     
-    // Send message to backend
+    // Send message to backend immediately if not a new chat
+    sendMessageToBackend(message);
+}
+
+// Helper function to send message to backend
+function sendMessageToBackend(message) {
     try {
-        const response = await vscode.postMessage({
+        vscode.postMessage({
             command: 'sendMessage',
             text: message,
             chatId: currentChatId
         });
-        
-        // This will be handled by the extension
     } catch (error) {
         console.error('Error sending message:', error);
         addMessage('Error: Failed to send message', false);
