@@ -1,7 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
+
 import * as vscode from 'vscode';
-import OpenAI from 'openai';
+
+import { api } from '../convex/_generated/api';
+import { convexClient, initializeConvexClient } from './convexClient';
 
 function loadEnvFile(context: vscode.ExtensionContext): { [key: string]: string } {
     const envVars: { [key: string]: string } = {};
@@ -20,6 +23,9 @@ function loadEnvFile(context: vscode.ExtensionContext): { [key: string]: string 
     
     // 3. Parent directory of extension (for development)
     possiblePaths.push(path.join(path.dirname(context.extensionPath), '.env'));
+    
+    // 4. .env.local for Convex
+    possiblePaths.push(path.join(context.extensionPath, '.env.local'));
     
     for (const envPath of possiblePaths) {
         console.log(`Checking for .env file at: ${envPath}`);
@@ -50,8 +56,31 @@ function loadEnvFile(context: vscode.ExtensionContext): { [key: string]: string 
     return envVars;
 }
 
+/**
+ * Initialize Convex client
+ */
+async function initializeConvex(context: vscode.ExtensionContext) {
+    try {
+        const envVars = loadEnvFile(context);
+        const convexUrl = envVars.CONVEX_URL || "https://aware-badger-44.convex.cloud";
+        
+        console.log('Convex initializing with URL:', convexUrl);
+        
+        // Initialize the Convex client with the loaded URL
+        initializeConvexClient(convexUrl);
+        
+        console.log('Convex client initialized successfully');
+        
+    } catch (error) {
+        console.error('Failed to initialize Convex:', error);
+    }
+}
+
 export function activate(context: vscode.ExtensionContext) {
     console.log('ARPA Chatbot extension is now active!');
+
+    // Initialize Convex
+    initializeConvex(context);
 
     const provider = new ChatbotViewProvider(context.extensionUri, context);
 
@@ -75,11 +104,7 @@ export function activate(context: vscode.ExtensionContext) {
 
             panel.webview.onDidReceiveMessage(
                 async message => {
-                    switch (message.command) {
-                        case 'sendMessage':
-                            await handleChatMessage(message.text, panel.webview, context);
-                            break;
-                    }
+                    await handleWebviewMessage(message, panel.webview, context);
                 },
                 undefined,
                 context.subscriptions
@@ -106,46 +131,168 @@ class ChatbotViewProvider implements vscode.WebviewViewProvider {
         webviewView.webview.html = getWebviewContent(this._context.extensionPath);
 
         webviewView.webview.onDidReceiveMessage(async message => {
-            switch (message.command) {
-                case 'sendMessage':
-                    await handleChatMessage(message.text, webviewView.webview, this._context);
-                    break;
-            }
+            await handleWebviewMessage(message, webviewView.webview, this._context);
         });
     }
 }
 
-async function handleChatMessage(userMessage: string, webview: vscode.Webview, context: vscode.ExtensionContext) {
+/**
+ * Handle messages from the webview
+ */
+async function handleWebviewMessage(message: any, webview: vscode.Webview, context: vscode.ExtensionContext) {
+    switch (message.command) {
+        case 'sendMessage':
+            await handleChatMessage(message.text, message.chatId, webview, context);
+            break;
+        case 'createChat':
+            await handleCreateChat(message.title, message.userId, webview, context);
+            break;
+        case 'getChats':
+            await handleGetChats(message.userId, webview, context);
+            break;
+        case 'getChatMessages':
+            await handleGetChatMessages(message.chatId, webview, context);
+            break;
+    }
+}
+
+/**
+ * Handle creating a new chat using Convex
+ */
+async function handleCreateChat(title: string, userId: string, webview: vscode.Webview, context: vscode.ExtensionContext) {
+    try {
+        console.log('handleCreateChat - Creating chat with title:', title, 'userId:', userId);
+        
+        // Call Convex to create a new chat
+        const chatId = await convexClient.mutation(api.chats.createChat, {
+            title,
+            userId
+        });
+        
+        console.log('Created chat in Convex with ID:', chatId);
+        
+        // Send response back to webview
+        webview.postMessage({
+            command: 'setCurrentChat',
+            chatId,
+            title
+        });
+        
+        console.log('Sent setCurrentChat message to webview with chatId:', chatId);
+        
+    } catch (error) {
+        console.error('Failed to create chat in Convex:', error);
+        webview.postMessage({
+            command: 'error',
+            message: 'Failed to create chat'
+        });
+    }
+}
+
+/**
+ * Handle getting chats from Convex
+ */
+async function handleGetChats(userId: string, webview: vscode.Webview, context: vscode.ExtensionContext) {
+    try {
+        // Call Convex to get chats
+        const chats = await convexClient.query(api.chats.getChats, { userId });
+        
+        console.log('Retrieved chats from Convex:', chats);
+        
+        webview.postMessage({
+            command: 'renderChatList',
+            chats
+        });
+        
+    } catch (error) {
+        console.error('Failed to get chats from Convex:', error);
+        webview.postMessage({
+            command: 'error',
+            message: 'Failed to load chats'
+        });
+    }
+}
+
+/**
+ * Handle getting chat messages from Convex
+ */
+async function handleGetChatMessages(chatId: string, webview: vscode.Webview, context: vscode.ExtensionContext) {
+    try {
+        // Call Convex to get messages
+        const messages = await convexClient.query(api.chats.getChatMessages, { chatId: chatId as any });
+        
+        console.log('Retrieved messages from Convex:', messages);
+        
+        webview.postMessage({
+            command: 'loadChatMessages',
+            messages
+        });
+        
+    } catch (error) {
+        console.error('Failed to get messages from Convex:', error);
+        webview.postMessage({
+            command: 'error',
+            message: 'Failed to load chat messages'
+        });
+    }
+}
+
+async function handleChatMessage(userMessage: string, chatId: string | null, webview: vscode.Webview, context: vscode.ExtensionContext) {
     const config = vscode.workspace.getConfiguration('arpa-chatbot');
     const envVars = loadEnvFile(context);
     
-    const apiKey = envVars.OPENAI_API_KEY || config.get<string>('openaiApiKey');
-    const model = config.get<string>('model') || 'gpt-3.5-turbo';
+    // const apiKey = envVars.OPENAI_API_KEY || config.get<string>('openaiApiKey');
+    // const model = config.get<string>('model') || 'gpt-3.5-turbo';
 
-    if (!apiKey) {
-        webview.postMessage({
-            command: 'addMessage',
-            message: 'Please configure your OpenAI API key in a .env file (OPENAI_API_KEY=your-key) or in VSCode settings.',
-            isUser: false
-        });
-        return;
-    }
+    // if (!apiKey) {
+    //     webview.postMessage({
+    //         command: 'addMessage',
+    //         message: 'Please configure your OpenAI API key in a .env file (OPENAI_API_KEY=your-key) or in VSCode settings.',
+    //         isUser: false
+    //     });
+    //     return;
+    // }
 
-    webview.postMessage({
-        command: 'addMessage',
-        message: userMessage,
-        isUser: true
-    });
+    // User message is already displayed in the frontend, no need to send it back
 
     try {
-        const openai = new OpenAI({ apiKey });
+        // const openai = new OpenAI({ apiKey });
         
-        const completion = await openai.chat.completions.create({
-            messages: [{ role: 'user', content: userMessage }],
-            model,
-        });
+        // const completion = await openai.chat.completions.create({
+        //     messages: [{ role: 'user', content: userMessage }],
+        //     model,
+        // });
 
-        const response = completion.choices[0]?.message?.content || 'No response from AI';
+        const response = 'Hello world red buill';
+        
+        // Save messages to Convex if we have a chat ID
+        console.log('handleChatMessage - chatId:', chatId, 'userMessage:', userMessage, 'response:', response);
+        
+        if (chatId) {
+            try {
+                console.log('Saving user message to Convex...');
+                await convexClient.mutation(api.chats.addMessage, {
+                    chatId: chatId as any,
+                    content: userMessage,
+                    role: 'user'
+                });
+                console.log('User message saved successfully');
+                
+                console.log('Saving AI response to Convex...');
+                await convexClient.mutation(api.chats.addMessage, {
+                    chatId: chatId as any,
+                    content: response,
+                    role: 'assistant'
+                });
+                console.log('AI response saved successfully');
+                
+                console.log('All messages saved to Convex successfully');
+            } catch (error) {
+                console.error('Failed to save messages to Convex:', error);
+            }
+        } else {
+            console.log('No chat ID available (chatId is null/undefined) - messages not saved to Convex');
+        }
         
         webview.postMessage({
             command: 'addMessage',
