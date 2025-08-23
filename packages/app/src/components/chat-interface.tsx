@@ -7,7 +7,7 @@ import { useQuery, useMutation } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
 import { cn } from '@/lib/utils';
-import { ChatV2 } from './chat-v2';
+import { ChatV3 } from './chat-v3';
 import { ThemeToggle } from './theme-toggle';
 
 export function ChatInterface() {
@@ -101,8 +101,8 @@ export function ChatInterface() {
       {/* Main Chat Area */}
       <div className="flex-1 flex flex-col">
         {selectedChatId ? (
-          // Use the new ChatV2 component with proper AI SDK Elements
-          <ChatV2 chatId={selectedChatId} />
+          // Use the new ChatV3 component with proper AI SDK Elements
+          <ChatV3 chatId={selectedChatId} />
         ) : (
           <div className="flex-1 flex items-center justify-center text-muted-foreground">
             <div className="text-center">
