@@ -1,6 +1,7 @@
 import { experimental_createMCPClient, type experimental_MCPClient } from 'ai';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import path from 'path';
+import { validateAIGatewayConfig } from '../config/ai-gateway';
 
 // Properly typed MCP client and tools
 let mcpClient: experimental_MCPClient | null = null;
@@ -9,10 +10,8 @@ let mcpTools: Record<string, any> | null = null;
 export async function initializeMCPClient() {
   if (mcpClient) return mcpTools;
   
-  // Validate OpenAI API key at initialization
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('OPENAI_API_KEY environment variable is required');
-  }
+  // Validate AI Gateway configuration
+  validateAIGatewayConfig();
   
   try {
     // Use Bun's import.meta.dir for path resolution
