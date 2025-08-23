@@ -5,6 +5,7 @@ import { LibSQLStore } from "@mastra/libsql";
 import { Memory } from "@mastra/memory";
 import { exec } from "node:child_process";
 import * as fs from "node:fs/promises";
+import { existsSync } from "node:fs";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
@@ -44,8 +45,30 @@ function cleanJsonResponse(text: string): string {
   return cleaned;
 }
 
-// Get the project root (4 levels up from this file)
-const PROJECT_ROOT = path.resolve(__dirname, '../../../../..');
+// Function to find the git root directory by looking for .git folder
+function findGitRoot(startDir: string = __dirname): string {
+  let currentDir = path.resolve(startDir);
+  
+  // Traverse up the directory tree looking for .git folder
+  while (currentDir !== path.parse(currentDir).root) {
+    const gitPath = path.join(currentDir, '.git');
+    
+    // Check if .git exists (can be either a directory or a file for git worktrees)
+    if (existsSync(gitPath)) {
+      return currentDir;
+    }
+    
+    // Move up one directory
+    currentDir = path.dirname(currentDir);
+  }
+  
+  // Fallback: if no .git found, use the current working directory
+  console.warn('No .git directory found, falling back to process.cwd()');
+  return process.cwd();
+}
+
+// Get the project root by finding the .git directory
+const PROJECT_ROOT = findGitRoot();
 
 // File Tools for Agents
 const listFilesTool = createTool({
