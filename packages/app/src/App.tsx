@@ -9,7 +9,7 @@ function App() {
     <ThemeProvider defaultTheme="dark">
       <ConvexClientProvider>
         <ChatInterface />
-        <Toaster position="top-left" richColors />
+        <Toaster position="bottom-right" richColors />
       </ConvexClientProvider>
     </ThemeProvider>
   );

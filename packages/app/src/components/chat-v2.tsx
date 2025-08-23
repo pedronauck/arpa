@@ -8,6 +8,8 @@ import {
   PromptInput,
   PromptInputSubmit,
   PromptInputTextarea,
+  PromptInputToolbar,
+  PromptInputTools,
 } from '@/components/ai-elements/prompt-input';
 import { Message, MessageContent } from '@/components/ai-elements/message';
 import {
@@ -23,6 +25,7 @@ import {
   ToolOutput,
 } from '@/components/ai-elements/tool';
 import { Response } from '@/components/ai-elements/response';
+import { FinalReport } from '@/components/ai-elements/final-report';
 import { useMutation, useQuery } from 'convex/react';
 import { api } from '../../convex/_generated/api';
 import type { Id } from '../../convex/_generated/dataModel';
@@ -60,13 +63,14 @@ export function ChatV2({ chatId }: ChatV2Props) {
       console.log('Finished message:', message);
 
       // The onFinish callback receives the completed message as parameter
-      if (message && message.role === 'assistant') {
+      if (message && message.message.role === 'assistant') {
         // Save the entire message structure (including parts) as JSON
+        const msg = message.message as any
         const messageContent = {
-          parts: message.parts || [],
+          parts: message.message.parts || [],
           // Include any other relevant fields
-          id: message.id,
-          createdAt: message.createdAt ? new Date(message.createdAt).getTime() : Date.now(),
+          id: message.message.id,
+          createdAt: msg.createdAt ? new Date(msg.createdAt).getTime() : Date.now(),
         };
 
         console.log('Saving full message structure:', messageContent);
@@ -78,6 +82,8 @@ export function ChatV2({ chatId }: ChatV2Props) {
             role: 'assistant',
           });
           console.log('✅ Assistant message saved successfully to Convex');
+          // Track that this message was saved to prevent duplicates
+          setSavedMessageIds(prev => new Set(prev).add(message.message.id));
           toast.success('Response saved');
         } catch (error) {
           console.error('❌ Failed to save assistant message:', error);
@@ -96,7 +102,9 @@ export function ChatV2({ chatId }: ChatV2Props) {
     setSavedMessageIds(new Set());
   }, [chatId, setMessages]);
 
-  // Save assistant messages when they appear
+  // This useEffect is commented out because saving is now handled in onFinish callback
+  // to prevent duplicate saves
+  /*
   useEffect(() => {
     const saveAssistantMessages = async () => {
       for (const message of messages) {
@@ -105,17 +113,18 @@ export function ChatV2({ chatId }: ChatV2Props) {
           // Check if the message has content (not still streaming)
           if (message.parts && message.parts.length > 0) {
             // Check if it's not just a step-start
-            const hasContent = message.parts.some(part => 
-              part.type !== 'step-start' && 
+            const hasContent = message.parts.some(part =>
+              part.type !== 'step-start' &&
               (part.type === 'text' || part.type === 'dynamic-tool' || part.type.startsWith('tool-'))
             );
-            
+
             if (hasContent) {
               console.log('Saving assistant message:', message.id);
+              const msg = message as any
               const messageContent = {
                 parts: message.parts,
                 id: message.id,
-                createdAt: message.createdAt ? new Date(message.createdAt).getTime() : Date.now(),
+                createdAt: msg.createdAt ? new Date(msg.createdAt).getTime() : Date.now(),
               };
 
               try {
@@ -140,6 +149,7 @@ export function ChatV2({ chatId }: ChatV2Props) {
       saveAssistantMessages();
     }
   }, [messages, status, chatId, saveMessage, savedMessageIds]);
+  */
 
   // Load historical messages when component mounts or chatId changes
   useEffect(() => {
@@ -158,7 +168,7 @@ export function ChatV2({ chatId }: ChatV2Props) {
           // Fallback
           parts = [{ type: 'text', text: JSON.stringify(msg.content) }];
         }
-        
+
         return {
           id: msg._id,
           role: msg.role,
@@ -308,7 +318,7 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
         parts: [{ type: 'text', text: continuationMessage }],
         createdAt: Date.now(), // Use timestamp instead of Date object
       };
-      
+
       await saveMessage({
         chatId,
         content: messageContent, // Save in consistent structured format
@@ -353,7 +363,7 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
         parts: [{ type: 'text', text: userMessage }],
         createdAt: Date.now(), // Use timestamp instead of Date object
       };
-      
+
       await saveMessage({
         chatId,
         content: messageContent, // Save in consistent format
@@ -391,6 +401,9 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
 
     const parts = message.parts || [];
     console.log('parts', parts);
+
+    // Extract final reports from tool outputs
+    const finalReports: any[] = [];
 
     return (
       <>
@@ -438,6 +451,36 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
               // Not JSON, continue with normal rendering
             }
 
+            // Extract final report if present
+            const finalReport = parsedOutput?.result?.finalReport || parsedOutput?.data?.result?.finalReport;
+            if (finalReport) {
+              // Get intermediate issues from suspend payload
+              const intermediateIssues = parsedOutput?.data?.steps?.['code-review']?.suspendPayload?.currentState?.issues_found || [];
+              const intermediateContext = parsedOutput?.data?.steps?.['code-review']?.suspendPayload?.currentState?.relevant_context || [];
+
+              // Get workflow data
+              const workflowData = {
+                startedAt: parsedOutput?.data?.steps?.['code-review']?.startedAt,
+                endedAt: parsedOutput?.data?.steps?.['code-review']?.endedAt,
+                suspendedAt: parsedOutput?.data?.steps?.['code-review']?.suspendedAt,
+                resumedAt: parsedOutput?.data?.steps?.['code-review']?.resumedAt,
+                continuation_id: parsedOutput?.data?.steps?.['code-review']?.suspendPayload?.currentState?.continuation_id,
+                review_type: parsedOutput?.data?.steps?.input?.review_type || parsedOutput?.data?.steps?.['code-review']?.payload?.review_type,
+                directory: parsedOutput?.data?.steps?.input?.directory || parsedOutput?.data?.steps?.['code-review']?.payload?.directory,
+                models: parsedOutput?.data?.steps?.input?.models || parsedOutput?.data?.steps?.['code-review']?.payload?.models,
+                steps: parsedOutput?.data?.steps
+              };
+
+              // Store it for rendering after the tool output
+              finalReports.push({
+                ...finalReport,
+                // Combine relevant context from final and intermediate
+                relevant_context: [...(finalReport.relevant_context || []), ...intermediateContext],
+                intermediate_issues: intermediateIssues,
+                workflow_data: workflowData
+              });
+            }
+
             return (
               <Tool key={`${message.id}-tool-${index}`} defaultOpen className="max-w-full">
                 <ToolHeader
@@ -453,39 +496,11 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
                       output={
                         <div className="max-w-full overflow-hidden">
                           {(() => {
-                            // Check for final report in the parsed output
-                            const finalReport = parsedOutput?.result?.finalReport || parsedOutput?.data?.result?.finalReport;
-                            
-                            // If we have a final report, show a summary
+                            // Don't show final report here anymore - it will be rendered separately
                             if (finalReport) {
                               return (
-                                <div className="space-y-3">
-                                  {finalReport.status && (
-                                    <div className="flex items-center gap-2">
-                                      <span className="text-sm">Review Status:</span>
-                                      <span className={`text-sm font-medium ${
-                                        finalReport.status === 'completed' ? 'text-green-600' : 'text-yellow-600'
-                                      }`}>
-                                        {finalReport.status === 'completed' ? '✓ Completed' : finalReport.status}
-                                      </span>
-                                    </div>
-                                  )}
-                                  
-                                  {finalReport.findings && (
-                                    <div>
-                                      <Response className="break-words">
-                                        {finalReport.findings}
-                                      </Response>
-                                    </div>
-                                  )}
-                                  
-                                  {/* Show count of issues if any */}
-                                  {parsedOutput.data?.steps?.['code-review']?.suspendPayload?.currentState?.issues_found?.length > 0 && (
-                                    <div className="text-sm text-muted-foreground">
-                                      Found {parsedOutput.data.steps['code-review'].suspendPayload.currentState.issues_found.length} issues during review. 
-                                      Click "Result JSON" below to see details.
-                                    </div>
-                                  )}
+                                <div className="text-sm text-muted-foreground">
+                                  Review completed. See the report below for details.
                                 </div>
                               );
                             }
@@ -557,7 +572,7 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
                                   onClick={() => continueWorkflow(parsedOutput.sessionId, toolPart.toolName)}
                                   size="sm"
                                   className="ml-4"
-                                  variant="default"
+                                  variant="primary"
                                   disabled={status === 'streaming' || status === 'submitted'}
                                 >
                                   Continue Step {(() => {
@@ -581,9 +596,9 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
                               </div>
                             </div>
                           )}
-                          
+
                           {/* JSON Result Toggle and Display */}
-                          {parsedOutput && !parsedOutput.status?.includes('suspended') && (
+                          {parsedOutput && !parsedOutput.status?.includes('suspended') && !finalReport && (
                             <div className="mt-4 border-t pt-4">
                               <Button
                                 onClick={() => toggleJsonVisibility(jsonKey)}
@@ -599,83 +614,11 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
                                 <CodeIcon className="size-4" />
                                 <span>Result JSON</span>
                               </Button>
-                              
+
                               {isJsonVisible && (
                                 <div className="mt-2 space-y-4">
-                                  {/* Render final report if present */}
-                                  {(parsedOutput.result?.finalReport || parsedOutput.data?.result?.finalReport) && (() => {
-                                    const finalReport = parsedOutput.result?.finalReport || parsedOutput.data?.result?.finalReport;
-                                    return (
-                                      <div className="space-y-3">
-                                        <h4 className="text-sm font-semibold">Final Report</h4>
-                                        
-                                        {finalReport.status && (
-                                          <div className="flex items-center gap-2">
-                                            <span className="text-sm text-muted-foreground">Status:</span>
-                                            <span className={`text-sm font-medium ${
-                                              finalReport.status === 'completed' ? 'text-green-600' : 'text-yellow-600'
-                                            }`}>
-                                              {finalReport.status}
-                                            </span>
-                                          </div>
-                                        )}
-                                        
-                                        {finalReport.findings && (
-                                          <div>
-                                            <p className="text-sm font-medium text-muted-foreground mb-2">Findings:</p>
-                                            <Response className="pl-2 space-y-2">
-                                              {finalReport.findings}
-                                            </Response>
-                                          </div>
-                                        )}
-                                        
-                                        {finalReport.issues && finalReport.issues.length > 0 && (
-                                          <div>
-                                            <p className="text-sm font-medium text-muted-foreground mb-2">Issues Found:</p>
-                                            <div className="space-y-2 pl-2">
-                                              {finalReport.issues.map((issue: any, idx: number) => (
-                                                <div key={idx} className="p-2 bg-muted/50 rounded-md">
-                                                  <div className="flex items-center gap-2 mb-1">
-                                                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                                                      issue.severity === 'high' ? 'bg-red-100 text-red-700' :
-                                                      issue.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                                      'bg-blue-100 text-blue-700'
-                                                    }`}>
-                                                      {issue.severity}
-                                                    </span>
-                                                    {issue.file && (
-                                                      <span className="text-xs text-muted-foreground">
-                                                        {issue.file}{issue.line ? `:${issue.line}` : ''}
-                                                      </span>
-                                                    )}
-                                                  </div>
-                                                  <Response className="text-sm">
-                                                    {issue.description}
-                                                  </Response>
-                                                </div>
-                                              ))}
-                                            </div>
-                                          </div>
-                                        )}
-                                        
-                                        {finalReport.files_checked && finalReport.files_checked.length > 0 && (
-                                          <div>
-                                            <p className="text-sm font-medium text-muted-foreground mb-2">Files Reviewed:</p>
-                                            <ul className="list-disc list-inside pl-2 space-y-1">
-                                              {finalReport.files_checked.map((file: string, idx: number) => (
-                                                <li key={idx} className="text-sm text-muted-foreground">
-                                                  <code className="text-xs bg-muted px-1 py-0.5 rounded">{file}</code>
-                                                </li>
-                                              ))}
-                                            </ul>
-                                          </div>
-                                        )}
-                                      </div>
-                                    );
-                                  })()}
-                                  
                                   {/* Render message if present and no final report */}
-                                  {parsedOutput.message && !parsedOutput.result?.finalReport && !parsedOutput.data?.result?.finalReport && (
+                                  {parsedOutput.message && (
                                     <div>
                                       <p className="text-sm font-medium text-muted-foreground mb-1">Message:</p>
                                       <Response className="pl-2">
@@ -683,7 +626,7 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
                                       </Response>
                                     </div>
                                   )}
-                                  
+
                                   {/* Render instructions if present */}
                                   {parsedOutput.instructions && (
                                     <div>
@@ -693,38 +636,8 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
                                       </Response>
                                     </div>
                                   )}
-                                  
-                                  {/* Show issues from intermediate steps if present */}
-                                  {parsedOutput.data?.steps?.['code-review']?.suspendPayload?.currentState?.issues_found && 
-                                   parsedOutput.data.steps['code-review'].suspendPayload.currentState.issues_found.length > 0 && (
-                                    <div>
-                                      <p className="text-sm font-medium text-muted-foreground mb-2">Issues Identified During Review:</p>
-                                      <div className="space-y-2 pl-2">
-                                        {parsedOutput.data.steps['code-review'].suspendPayload.currentState.issues_found.map((issue: any, idx: number) => (
-                                          <div key={idx} className="p-2 bg-muted/50 rounded-md">
-                                            <div className="flex items-center gap-2 mb-1">
-                                              <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                                                issue.severity === 'high' ? 'bg-red-100 text-red-700' :
-                                                issue.severity === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                                'bg-blue-100 text-blue-700'
-                                              }`}>
-                                                {issue.severity}
-                                              </span>
-                                              {issue.file && (
-                                                <span className="text-xs text-muted-foreground">
-                                                  {issue.file}{issue.line ? `:${issue.line}` : ''}
-                                                </span>
-                                              )}
-                                            </div>
-                                            <Response className="text-sm">
-                                              {issue.description}
-                                            </Response>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                  
+
+
                                   {/* Full JSON in collapsible */}
                                   <details className="mt-3">
                                     <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
@@ -785,6 +698,20 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
             </div>
           );
         })}
+
+        {finalReports.map((report, idx) => (
+          <FinalReport
+            key={`${message.id}-final-report-${idx}`}
+            status={report.status}
+            findings={report.findings}
+            issues={report.issues}
+            files_checked={report.files_checked}
+            confidence={report.confidence}
+            relevant_context={report.relevant_context}
+            workflow_data={report.workflow_data}
+            intermediate_issues={report.intermediate_issues}
+          />
+        ))}
       </>
     );
   };
@@ -838,31 +765,27 @@ ${isLastStep ? 'This is the final step - complete the review.' : 'Continue the i
             placeholder="Type your message..."
             disabled={status === 'streaming' || status === 'submitted'}
             className="min-h-[80px] w-full max-w-full"
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                const form = e.currentTarget.form;
-                if (form) {
-                  form.requestSubmit();
-                }
-              }
-            }}
           />
-          {status === 'streaming' ? (
-            <Button
-              type="button"
-              onClick={() => stop()}
-              variant="destructive"
-              size="icon"
-            >
-              <SquareIcon className="size-4" />
-            </Button>
-          ) : (
-            <PromptInputSubmit
-              disabled={!input.trim() || status === 'submitted'}
-              status={status}
-            />
-          )}
+          <PromptInputToolbar>
+            <PromptInputTools>
+              {/* Add any tool buttons here if needed */}
+            </PromptInputTools>
+            {status === 'streaming' ? (
+              <Button
+                type="button"
+                onClick={() => stop()}
+                variant="destructive"
+                size="icon"
+              >
+                <SquareIcon className="size-4" />
+              </Button>
+            ) : (
+              <PromptInputSubmit
+                disabled={!input.trim() || status === 'submitted'}
+                status={status}
+              />
+            )}
+          </PromptInputToolbar>
         </PromptInput>
 
         <div className="flex items-center justify-center gap-4 mt-2">
