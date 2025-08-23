@@ -90,16 +90,75 @@
         .status-dot-ai {
             background-color: var(--primary-red);
         }
+
+        .sidebar {
+            background-color: var(--dark-gray);
+            border-right: 2px solid var(--primary-red);
+        }
+
+        .chat-item {
+            border-left: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .chat-item:hover {
+            border-left-color: var(--primary-red);
+            background-color: rgba(220, 38, 38, 0.1);
+        }
+
+        .chat-item.active {
+            border-left-color: var(--primary-red);
+            background-color: rgba(220, 38, 38, 0.2);
+        }
+
+        .new-chat-btn {
+            background: linear-gradient(135deg, var(--primary-red), var(--dark-red));
+            color: var(--pure-white);
+            transition: all 0.2s ease;
+        }
+
+        .new-chat-btn:hover {
+            background: linear-gradient(135deg, var(--dark-red), var(--primary-red));
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(220, 38, 38, 0.3);
+        }
     </style>
 </head>
-<body class="m-0 p-6 h-screen flex flex-col">
-    <div class="flex-1 flex flex-col max-w-4xl mx-auto w-full">
+<body class="m-0 h-screen flex">
+    <!-- Sidebar -->
+    <div class="sidebar w-64 p-4 flex flex-col">
         <!-- Header -->
         <div class="mb-6 text-center">
-            <h1 class="text-3xl font-bold mb-2 chat-header">
-                ARPA
-            </h1>
-            <p class="text-sm text-red-400 font-medium">AI-powered assistant</p>
+            <h1 class="text-2xl font-bold mb-2 chat-header">ARPA</h1>
+            <p class="text-xs text-red-400 font-medium">AI-powered assistant</p>
+        </div>
+        
+        <!-- New Chat Button -->
+        <button 
+            id="newChatBtn"
+            class="new-chat-btn w-full py-3 px-4 rounded-lg font-bold mb-4 flex items-center justify-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
+            </svg>
+            New Chat
+        </button>
+        
+        <!-- Chat List -->
+        <div class="flex-1 overflow-y-auto">
+            <div id="chatList" class="space-y-2">
+                <!-- Chat items will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Chat Area -->
+    <div class="flex-1 flex flex-col p-6">
+        <!-- Chat Header -->
+        <div class="mb-6 text-center">
+            <h2 id="currentChatTitle" class="text-2xl font-bold mb-2 chat-header">
+                New Chat
+            </h2>
+            <p class="text-sm text-red-400 font-medium">Start a new conversation</p>
         </div>
         
         <!-- Chat Messages Container -->
