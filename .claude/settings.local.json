@@ -7,7 +7,13 @@
       "mcp__mastra__mastraExamples",
       "mcp__serena__list_dir",
       "Bash(grep:*)",
-      "mcp__zen__debug"
+      "mcp__zen__debug",
+      "Bash(bun install:*)",
+      "Bash(bun:*)",
+      "Bash(VERCEL_API_TOKEN=temp_token_for_testing bun run dev)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(VERCEL_API_TOKEN=temp_token_for_testing bun dev)"
     ],
     "additionalDirectories": [
       "/Users/pedronauck/Dev/ai/zen-mcp-server/"

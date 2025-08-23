@@ -1,6 +1,3 @@
-import { anthropic } from "@ai-sdk/anthropic";
-import { google } from "@ai-sdk/google";
-import { openai } from "@ai-sdk/openai";
 import { Agent, createTool } from "@mastra/core";
 import { RuntimeContext } from "@mastra/core/runtime-context";
 import { createStep, createWorkflow } from "@mastra/core/workflows";
@@ -11,6 +8,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
+import { normalizeModelName } from "../../config/ai-gateway";
 
 const execAsync = promisify(exec);
 
@@ -161,10 +159,7 @@ const dynamicReviewAgent = (contextKey: string) =>
     },
     model: ({ runtimeContext }) => {
       const modelName = runtimeContext.get(contextKey) as string;
-      if (modelName.includes("gemini")) return google(modelName);
-      if (modelName.includes("openai") || modelName === "o3") return openai("gpt-4o");
-      if (modelName.includes("claude")) return anthropic(modelName);
-      return openai("gpt-4o-mini"); // Default
+      return normalizeModelName(modelName);
     },
     tools: {
       list_files: listFilesTool,

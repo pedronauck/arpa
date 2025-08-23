@@ -1,11 +1,18 @@
 import { Hono } from 'hono';
 import { streamText, convertToModelMessages } from 'ai';
-import { openai } from '@ai-sdk/openai';
 import { ensureMCPConnection } from '../services/mcp-client';
+import { normalizeModelName, validateAIGatewayConfig } from '../config/ai-gateway';
 
 const chat = new Hono();
 
 chat.post('/chat', async (c) => {
+  // Validate AI Gateway configuration
+  try {
+    validateAIGatewayConfig();
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : 'AI Gateway configuration error' }, 500);
+  }
+
   const { messages } = await c.req.json();
 
   // Convert messages to UIMessage format if needed
@@ -36,7 +43,7 @@ chat.post('/chat', async (c) => {
 
   try {
     const response = streamText({
-      model: openai('gpt-4o'),
+      model: normalizeModelName('claude-sonnet-4'),
       messages: modelMessages,
       tools,
       system: "You are an AI assistant with code review capabilities via MCP tools. When asked to review code, use the code_review tool to perform the review.",
