@@ -8,7 +8,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { promisify } from "node:util";
 import { z } from "zod";
-import { normalizeModelName } from "../../config/ai-gateway";
+import { getAIGatewayModel } from "../../config/ai-gateway-model";
 
 const execAsync = promisify(exec);
 
@@ -159,7 +159,7 @@ const dynamicReviewAgent = (contextKey: string) =>
     },
     model: ({ runtimeContext }) => {
       const modelName = runtimeContext.get(contextKey) as string;
-      return normalizeModelName(modelName);
+      return getAIGatewayModel(modelName);
     },
     tools: {
       list_files: listFilesTool,

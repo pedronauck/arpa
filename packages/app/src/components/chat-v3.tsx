@@ -47,7 +47,7 @@ export function ChatV3({ chatId }: ChatV3Props) {
     }),
     onFinish: async (message) => {
       console.log('onFinish - Processing assistant response');
-      
+
       if (message && message.message.role === 'assistant') {
         const msg = message.message as any;
         const messageContent = {
@@ -172,7 +172,7 @@ export function ChatV3({ chatId }: ChatV3Props) {
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-[calc(100vw-200px)] overflow-hidden">
+    <div className="flex flex-col h-full w-full max-w-100vw overflow-hidden">
       {/* Messages Area */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 w-full max-w-full">
         {messages.length === 0 && status === 'ready' ? (

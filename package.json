@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
+    "dev:app": "bun --filter 'app' dev",
+    "dev:backend-only": "bun --filter '@arpa/backend' dev",
     "build": "turbo run build",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
@@ -40,6 +42,7 @@
     "vitest": "3.2.4"
   },
   "dependencies": {
+    "@ai-sdk/openai": "^2.0.19",
     "@ai-sdk/react": "^2.0.22",
     "@ai-sdk/ui-utils": "^1.2.11",
     "@hookform/resolvers": "^5.2.1",

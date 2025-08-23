@@ -1,38 +1,17 @@
-import { Hono } from "hono";
-import { cors } from "hono/cors";
-import { logger } from "hono/logger";
-import chat from "./routes/chat";
-import { initializeMCPClient, closeMCPClient } from "./services/mcp-client";
-
-const app = new Hono();
-
-app.use("*", logger());
-app.use("*", cors());
-
-app.get("/", c => {
-  return c.json({ message: "Backend API running with MCP support" });
-});
-
-app.get("/health", c => {
-  return c.json({ status: "healthy", timestamp: new Date().toISOString() });
-});
+import { app, initializeApp, cleanupApp } from "./app";
 
 const port = process.env.PORT || 3001;
 
 // Async initialization wrapper
 async function startServer() {
   try {
-    // Initialize MCP client BEFORE mounting routes
-    await initializeMCPClient();
-    console.log('MCP client initialized successfully');
-    
-    // Mount chat routes AFTER MCP is ready
-    app.route("/api", chat);
+    // Initialize app with MCP
+    await initializeApp();
     
     // Cleanup on shutdown
     process.on('SIGINT', async () => {
       console.log('Shutting down...');
-      await closeMCPClient();
+      await cleanupApp();
       process.exit(0);
     });
     

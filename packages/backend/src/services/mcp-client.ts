@@ -6,12 +6,15 @@ import { validateAIGatewayConfig } from '../config/ai-gateway';
 // Properly typed MCP client and tools
 let mcpClient: experimental_MCPClient | null = null;
 let mcpTools: Record<string, any> | null = null;
+let connectionStatus: 'connected' | 'disconnected' | 'connecting' = 'disconnected';
 
 export async function initializeMCPClient() {
   if (mcpClient) return mcpTools;
   
   // Validate AI Gateway configuration
   validateAIGatewayConfig();
+  
+  connectionStatus = 'connecting';
   
   try {
     // Use Bun's import.meta.dir for path resolution
@@ -25,9 +28,11 @@ export async function initializeMCPClient() {
     mcpClient = await experimental_createMCPClient({ transport });
     mcpTools = await mcpClient.tools();
     
+    connectionStatus = 'connected';
     console.log('MCP client initialized with tools:', mcpTools ? Object.keys(mcpTools) : []);
     return mcpTools;
   } catch (error) {
+    connectionStatus = 'disconnected';
     console.error('Failed to initialize MCP client:', error);
     throw error;
   }
@@ -38,6 +43,7 @@ export async function closeMCPClient() {
     await mcpClient.close();
     mcpClient = null;
     mcpTools = null;
+    connectionStatus = 'disconnected';
   }
 }
 
@@ -52,4 +58,13 @@ export async function ensureMCPConnection() {
     return await initializeMCPClient();
   }
   return mcpTools;
+}
+
+// Get connection status
+export function getMCPConnectionStatus() {
+  return {
+    status: connectionStatus,
+    hasTools: mcpTools !== null,
+    toolCount: mcpTools ? Object.keys(mcpTools).length : 0
+  };
 }

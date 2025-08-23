@@ -22,14 +22,14 @@ interface MessageRendererProps {
   workflowContinuation: WorkflowContinuation;
 }
 
-export function MessageRenderer({ 
-  message, 
+export function MessageRenderer({
+  message,
   messages,
   status,
-  workflowContinuation 
+  workflowContinuation
 }: MessageRendererProps) {
   const [jsonVisibility, setJsonVisibility] = useState<Map<string, boolean>>(new Map());
-  
+
   const toggleJsonVisibility = (key: string) => {
     setJsonVisibility(prev => {
       const newMap = new Map(prev);
@@ -42,7 +42,7 @@ export function MessageRenderer({
   const finalReports: any[] = [];
 
   return (
-    <>
+    <div className="flex flex-col gap-6 p-2">
       {parts.map((part, index) => {
         // Handle text parts
         if (part.type === 'text') {
@@ -342,6 +342,6 @@ export function MessageRenderer({
           intermediate_issues={report.intermediate_issues}
         />
       ))}
-    </>
+    </div>
   );
 }
