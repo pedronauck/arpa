@@ -9,7 +9,15 @@ export const app = new Hono();
 
 // Apply middleware
 app.use("*", logger());
-app.use("*", cors());
+
+// Configure CORS - allow all origins for MVP
+app.use("*", cors({
+  origin: '*',
+  credentials: true,
+  allowHeaders: ['Content-Type', 'X-Model', 'Authorization'],
+  allowMethods: ['GET', 'POST', 'OPTIONS'],
+  exposeHeaders: ['Content-Type', 'X-Stream-Output']
+}));
 
 // Root routes
 app.get("/", c => {

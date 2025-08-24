@@ -1,0 +1,76 @@
+{
+  "name": "arpa-chat",
+  "displayName": "ARPA Chat Interface",
+  "description": "AI-powered chat interface for VS Code",
+  "version": "0.1.1",
+  "publisher": "arpa",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "icon": "resources/icon.png",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "arpa.copyToClipboard",
+        "title": "Copy to Clipboard"
+      },
+      {
+        "command": "arpa.pasteFromClipboard",
+        "title": "Paste from Clipboard"
+      },
+      {
+        "command": "arpa.getSelection",
+        "title": "Get Editor Selection"
+      }
+    ],
+    "configuration": {
+      "title": "ARPA",
+      "properties": {
+        "arpa.appUrl": {
+          "type": "string",
+          "default": "http://localhost:5173",
+          "description": "URL of the ARPA app running locally"
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "arpa-sidebar",
+          "title": "ARPA Chat",
+          "icon": "resources/sidebar-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "arpa-sidebar": [
+        {
+          "type": "webview",
+          "id": "arpa.chatView",
+          "name": "Chat"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run compile",
+    "compile": "bunx tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "build": "bun run compile",
+    "package": "vsce package --no-dependencies",
+    "clean": "rm -rf out",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {}
+}
